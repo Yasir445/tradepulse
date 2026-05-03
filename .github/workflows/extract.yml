@@ -3,21 +3,30 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
+
 jobs:
   extract:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
       - name: Unzip and restructure
         run: |
           unzip tradepulse-phase1.zip
           cp -r tradepulse/. .
           rm -rf tradepulse
           rm -f tradepulse-phase1.zip
+          rm -f .github/workflows/extract.yml
+      
       - name: Commit files
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
-          git add .
-          git commit -m "Extract project files"
+          git add -A
+          git commit -m "Extract project files" || echo "Nothing to commit"
           git push
