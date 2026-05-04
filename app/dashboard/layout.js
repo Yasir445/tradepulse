@@ -1,110 +1,137 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
 const NAV = [
-  { href: '/dashboard',           icon: '⬛', label: 'OVERVIEW'   },
-  { href: '/dashboard/checklist', icon: '✓',  label: 'PRE-TRADE'  },
-  { href: '/dashboard/journal',   icon: '📋', label: 'JOURNAL'    },
-  { href: '/dashboard/analyzer',  icon: '🤖', label: 'AI CHART'   },
-  { href: '/dashboard/stats',     icon: '📈', label: 'STATS'      },
-  { href: '/dashboard/rules',     icon: '⚡', label: 'RULES'      },
+  { href: '/dashboard',            label: 'Overview',   icon: '⬡' },
+  { href: '/dashboard/checklist',  label: 'Checklist',  icon: '✓' },
+  { href: '/dashboard/journal',    label: 'Journal',    icon: '≡' },
+  { href: '/dashboard/stats',      label: 'Stats',      icon: '◈' },
+  { href: '/dashboard/analyzer',   label: 'AI Analyze', icon: '◎' },
 ]
 
 export default function DashboardLayout({ children }) {
-  const pathname = usePathname()
+  const [user,    setUser]    = useState(null)
+  const [loading, setLoading] = useState(true)
   const router   = useRouter()
-  const [user, setUser]         = useState(null)
-  const [open, setOpen]         = useState(false)
+  const pathname = usePathname()
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getUser().then(({ data }) => setUser(data.user))
-  }, [])
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) router.replace('/login')
+      else { setUser(user); setLoading(false) }
+    })
+  }, [router])
 
-  async function handleLogout() {
+  const handleLogout = async () => {
     const supabase = createClient()
     await supabase.auth.signOut()
-    router.push('/')
+    router.replace('/login')
   }
 
-  const userName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'TRADER'
+  if (loading) return (
+    <div style={{ minHeight:'100vh', background:'#080808', display:'flex',
+      alignItems:'center', justifyContent:'center' }}>
+      <div style={{ width:6, height:6, borderRadius:'50%', background:'#22c55e',
+        animation:'pulse 1s infinite' }} />
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.2}}`}</style>
+    </div>
+  )
 
   return (
-    <div className="min-h-screen flex bg-bg">
+    <div style={{ minHeight:'100vh', background:'#080808', display:'flex' }}>
 
       {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-40 flex flex-col bg-surface border-r border-border transition-all duration-300 ${open ? 'w-52' : 'w-16'} md:w-52`}>
-        {/* Logo */}
-        <div className="h-16 flex items-center px-4 border-b border-border flex-shrink-0">
-          <Link href="/" className={`font-display tracking-widest text-accent glow-accent transition-all ${open ? 'text-xl' : 'text-sm'} md:text-xl`}>
-            {open ? 'TRADEPULSE' : 'TP'}
-            <span className="hidden md:inline">TRADEPULSE</span>
-          </Link>
-          {/* Mobile toggle */}
-          <button onClick={() => setOpen(!open)} className="ml-auto text-dim hover:text-bright md:hidden">
-            {open ? '✕' : '☰'}
-          </button>
+      <aside className="sidebar" style={{
+        width:220, minHeight:'100vh', background:'#0d0d0d',
+        borderRight:'1px solid #1a1a1a', display:'flex', flexDirection:'column',
+        padding:'1.5rem 0', position:'fixed', top:0, left:0, bottom:0, zIndex:50,
+      }}>
+        <div style={{ padding:'0 1.25rem 2rem' }}>
+          <span style={{ color:'#fff', fontWeight:900, letterSpacing:'0.25em', fontSize:'0.95rem' }}>
+            TRADEPULSE
+          </span>
+          <span style={{ marginLeft:'0.5rem', background:'#22c55e', color:'#000',
+            fontSize:'0.5rem', fontWeight:800, padding:'1px 5px', borderRadius:'3px',
+            letterSpacing:'0.1em', verticalAlign:'middle' }}>LIVE</span>
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 py-4 space-y-1 px-2 overflow-y-auto">
-          {NAV.map(n => {
-            const active = pathname === n.href
+        <div style={{ padding:'0 1.25rem 1.5rem', borderBottom:'1px solid #1a1a1a', marginBottom:'1rem' }}>
+          <p style={{ color:'#888', fontSize:'0.6rem', letterSpacing:'0.15em',
+            textTransform:'uppercase', margin:'0 0 0.25rem' }}>Trader</p>
+          <p style={{ color:'#fff', fontSize:'0.8rem', margin:0,
+            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+            {user?.email}
+          </p>
+        </div>
+
+        <nav style={{ flex:1, padding:'0 0.75rem' }}>
+          {NAV.map(({ href, label, icon }) => {
+            const active = pathname === href
             return (
-              <Link key={n.href} href={n.href}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded text-xs font-mono tracking-widest transition-all group ${
-                  active
-                    ? 'bg-accent/10 border border-accent/20 text-accent'
-                    : 'text-dim hover:text-bright hover:bg-s2 border border-transparent'
-                }`}>
-                <span className="text-base flex-shrink-0">{n.icon}</span>
-                <span className={`${open ? 'block' : 'hidden'} md:block`}>{n.label}</span>
+              <Link key={href} href={href} style={{
+                display:'flex', alignItems:'center', gap:'0.75rem',
+                padding:'0.65rem 0.75rem', borderRadius:'6px', marginBottom:'2px',
+                color: active ? '#fff' : '#888',
+                background: active ? '#1a1a1a' : 'transparent',
+                textDecoration:'none', fontSize:'0.85rem',
+                fontWeight: active ? 700 : 400, transition:'all 0.15s',
+              }}>
+                <span style={{ fontSize:'1rem', color: active ? '#22c55e' : '#555' }}>{icon}</span>
+                {label}
+                {active && <span style={{ marginLeft:'auto', width:4, height:4,
+                  borderRadius:'50%', background:'#22c55e' }} />}
               </Link>
             )
           })}
         </nav>
 
-        {/* User */}
-        <div className="p-3 border-t border-border flex-shrink-0">
-          <div className={`flex items-center gap-3 px-2 py-2 ${open ? '' : 'justify-center'} md:justify-start`}>
-            <div className="w-7 h-7 rounded-full bg-accent/20 border border-accent/30 flex items-center justify-center text-accent text-xs font-mono font-bold flex-shrink-0">
-              {userName[0]?.toUpperCase()}
-            </div>
-            <div className={`flex-1 min-w-0 ${open ? 'block' : 'hidden'} md:block`}>
-              <div className="text-bright text-xs font-mono truncate">{userName.toUpperCase()}</div>
-              <button onClick={handleLogout} className="text-dim text-[10px] font-mono tracking-widest hover:text-danger transition-colors">
-                LOGOUT →
-              </button>
-            </div>
-          </div>
+        <div style={{ padding:'1rem 1.25rem', borderTop:'1px solid #1a1a1a' }}>
+          <button onClick={handleLogout} style={{
+            width:'100%', background:'transparent', border:'1px solid #1f1f1f',
+            borderRadius:'6px', color:'#888', padding:'0.6rem', fontSize:'0.75rem',
+            letterSpacing:'0.15em', textTransform:'uppercase', cursor:'pointer',
+          }}>Logout</button>
         </div>
       </aside>
 
-      {/* Main */}
-      <main className="flex-1 md:ml-52 min-h-screen flex flex-col">
-        {/* Top bar */}
-        <header className="h-16 border-b border-border flex items-center px-6 gap-4 bg-surface/50 backdrop-blur sticky top-0 z-30">
-          <button onClick={() => setOpen(!open)} className="md:hidden text-dim hover:text-bright">☰</button>
-          <div className="text-xs text-dim font-mono tracking-widest flex items-center gap-2">
-            <span className="text-accent">TRADEPULSE</span>
-            <span>/</span>
-            <span>{NAV.find(n => n.href === pathname)?.label || 'DASHBOARD'}</span>
-          </div>
-          <div className="ml-auto flex items-center gap-4">
-            <div className="flex items-center gap-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-a3 animate-glow-pulse" />
-              <span className="text-a3 text-[10px] font-mono tracking-widest">LIVE</span>
-            </div>
-          </div>
-        </header>
-
-        <div className="flex-1 p-6">
-          {children}
-        </div>
+      {/* Main content */}
+      <main className="main-content" style={{ marginLeft:220, flex:1, padding:'2rem' }}>
+        {children}
       </main>
+
+      {/* Mobile bottom nav */}
+      <nav className="mobile-nav" style={{
+        display:'none', position:'fixed', bottom:0, left:0, right:0,
+        background:'#0d0d0d', borderTop:'1px solid #1a1a1a',
+        padding:'0.5rem 0', zIndex:50,
+      }}>
+        {NAV.map(({ href, label, icon }) => {
+          const active = pathname === href
+          return (
+            <Link key={href} href={href} style={{
+              display:'flex', flexDirection:'column', alignItems:'center', gap:'2px',
+              padding:'0.4rem 0.5rem', color: active ? '#22c55e' : '#555',
+              textDecoration:'none', fontSize:'0.6rem', letterSpacing:'0.1em',
+              textTransform:'uppercase', flex:1,
+            }}>
+              <span style={{ fontSize:'1.1rem' }}>{icon}</span>
+              {label}
+            </Link>
+          )
+        })}
+      </nav>
+
+      <style>{`
+        @media(max-width:768px){
+          .sidebar       { display:none !important; }
+          .main-content  { margin-left:0 !important; padding:1rem 1rem 5rem !important; }
+          .mobile-nav    { display:flex !important; }
+        }
+      `}</style>
     </div>
   )
 }
