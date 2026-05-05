@@ -4,6 +4,10 @@ import { NextResponse } from 'next/server'
 export async function middleware(request) {
   const { pathname } = request.nextUrl
 
+  if (!pathname.startsWith('/dashboard')) {
+    return NextResponse.next()
+  }
+
   let response = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -25,19 +29,13 @@ export async function middleware(request) {
 
   const { data: { session } } = await supabase.auth.getSession()
 
-  // If trying to access dashboard without session → go to login
-  if (pathname.startsWith('/dashboard') && !session) {
+  if (!session) {
     return NextResponse.redirect(new URL('/login', request.url))
-  }
-
-  // If logged in and trying to access login/signup → go to dashboard
-  if ((pathname === '/login' || pathname === '/signup') && session) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
   return response
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/login', '/signup'],
+  matcher: ['/dashboard/:path*'],
 }
