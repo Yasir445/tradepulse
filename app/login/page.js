@@ -18,7 +18,7 @@ export default function LoginPage() {
     const supabase = createClient()
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) { setError(error.message); setLoading(false) }
-    else window.location.href = '/dashboard'
+    else { await new Promise(r => setTimeout(r, 500)); window.location.href = '/dashboard' }
   }
   return (
     <div className="min-h-screen flex items-center justify-center px-4 relative">
