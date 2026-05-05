@@ -20,9 +20,9 @@ export default function DashboardLayout({ children }) {
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) router.replace('/login')
-      else { setUser(user); setLoading(false) }
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) router.replace('/login')
+      else { setUser(session.user); setLoading(false) }
     })
   }, [router])
 
