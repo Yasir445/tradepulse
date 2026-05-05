@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 
 export async function middleware(request) {
   const { pathname } = request.nextUrl
+
   let response = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -10,10 +11,11 @@ export async function middleware(request) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
       cookies: {
-        getAll() { return request.cookies.getAll() },
+        getAll() {
+          return request.cookies.getAll()
+        },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => {
-            request.cookies.set(name, value)
             response.cookies.set(name, value, options)
           })
         },
@@ -21,15 +23,15 @@ export async function middleware(request) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
+  const { data: { session } } = await supabase.auth.getSession()
 
-  // Protect dashboard — redirect to login if not logged in
-  if (pathname.startsWith('/dashboard') && !user) {
+  // If trying to access dashboard without session → go to login
+  if (pathname.startsWith('/dashboard') && !session) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // Redirect logged-in users away from login/signup
-  if ((pathname === '/login' || pathname === '/signup') && user) {
+  // If logged in and trying to access login/signup → go to dashboard
+  if ((pathname === '/login' || pathname === '/signup') && session) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
