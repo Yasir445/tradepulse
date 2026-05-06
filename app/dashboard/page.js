@@ -14,7 +14,8 @@ export default function DashboardPage() {
   useEffect(() => {
     const load = async () => {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { session } } = await supabase.auth.getSession()
+const user = session?.user
       if (!user) return
       const { data } = await supabase
         .from('trades')
