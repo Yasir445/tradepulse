@@ -1,199 +1,332 @@
 'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { createClient } from '@/lib/supabase'
 
-const STEPS = [
-  {
-    id: 'fourh_tpd',
-    label: '4H TPD in Direction',
-    desc: 'Three-candle TPD between NQ and ES at the 4H swing confirming bias.',
-    detail: 'NQ and ES must show divergence at the 4H swing. One makes a new high/low while the other fails → confirms expansion direction.',
-  },
-  {
-    id: 'daily_smt',
-    label: 'Daily SMT on M15',
-    desc: 'Sequential SMT divergence on the Daily cycle visible on M15 after a swing.',
-    detail: 'NQ vs ES: one prints a new swing high/low on M15 while the other does not. Primary confluence. NO Daily SMT = NO trade.',
-  },
-  {
-    id: 'ninety_smt',
-    label: '90M SMT on M5 (after Daily)',
-    desc: '90-minute cycle SMT confirming the Daily SMT — must occur AFTER daily SMT.',
-    detail: 'On M5, after Daily SMT prints, wait for 90M SMT in same direction. Two-stage SSMT = highest probability.',
-  },
-  {
-    id: 'm5_tpd',
-    label: 'M5 TPD Entry Trigger',
-    desc: 'Three-candle TPD on M5 at the CISD of TPD reversion level — actual entry trigger.',
-    detail: 'M5 TPD fires at the CISD level from Daily TPD. PSP → CISD → M5 TPD chain. Stop on swing high/low of TPD candle.',
-  },
-  {
-    id: 'true_opens',
-    label: 'Both True Opens Aligned',
-    desc: 'Price on correct side of BOTH Daily TO (12AM) and session TO.',
-    detail: 'Longs: price below both Daily TO and NY TO (7:30AM). Shorts: above both. Selling above TWO true opens = highest probability bearish.',
-  },
+const MISTAKES = [
+  'Entered before Q2 complete','No Daily SMT','No 90M SMT',
+  'Moved SL to BE early','FOMO entry','No TPD entry trigger',
+  'Wrong True Open side','Chased price','Over-leveraged','Early exit',
 ]
 
-const GRADES = {
-  5: { grade:'A++', color:'#eab308', bg:'#1a1500', msg:'EXECUTE — FULL CONFLUENCE' },
-  4: { grade:'A+',  color:'#22c55e', bg:'#052e16', msg:'STRONG SETUP — EXECUTE' },
-  3: { grade:'A',   color:'#86efac', bg:'#041f10', msg:'GOOD SETUP — PROCEED WITH DISCIPLINE' },
-  2: { grade:'B',   color:'#3b82f6', bg:'#0c1b38', msg:'PARTIAL CONFLUENCE — CAUTION' },
-  1: { grade:'C',   color:'#f59e0b', bg:'#1c1000', msg:'WEAK SETUP — WAIT FOR MORE CONFLUENCE' },
-  0: { grade:'F',   color:'#ef4444', bg:'#1c0a0a', msg:'NO TRADE — STAND ASIDE' },
+const GRADE_COLOR = {
+  'A++':'#eab308','A+':'#22c55e','A':'#86efac','B':'#3b82f6','C':'#f59e0b','F':'#ef4444'
 }
 
-export default function ChecklistPage() {
-  const [checked,   setChecked]   = useState({})
-  const [expanded,  setExpanded]  = useState(null)
-  const [symbol,    setSymbol]    = useState('NQ')
-  const [direction, setDirection] = useState('LONG')
-  const router = useRouter()
+const emptyForm = {
+  symbol:'NQ', date: new Date().toISOString().slice(0,10),
+  session:'NY', direction:'LONG',
+  entry:'', sl:'', tp:'', exit:'', result:'WIN',
+  pnl:'', rr:'', grade:'A', narrative:'', mistakes:[], mood:3,
+}
 
-  const count     = STEPS.filter(s => checked[s.id]).length
-  const gradeInfo = GRADES[count]
+export default function JournalPage() {
+  const params  = useSearchParams()
+  const [trades,  setTrades]  = useState([])
+  const [loading, setLoading] = useState(true)
+  const [modal,   setModal]   = useState(false)
+  const [saving,  setSaving]  = useState(false)
+  const [filter,  setFilter]  = useState('ALL')
+  const [form,    setForm]    = useState(() => ({
+    ...emptyForm,
+    ...(params.get('grade')     && { grade:     params.get('grade') }),
+    ...(params.get('symbol')    && { symbol:    params.get('symbol') }),
+    ...(params.get('direction') && { direction: params.get('direction') }),
+  }))
 
-  const toggle = (id) => setChecked(p => ({ ...p, [id]: !p[id] }))
-  const reset  = () => setChecked({})
+  const loadTrades = useCallback(async () => {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const { data } = await supabase
+      .from('trades')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+    setTrades(data || [])
+    setLoading(false)
+  }, [])
 
-  const goToJournal = () => {
-    const params = new URLSearchParams({
-      grade: gradeInfo.grade, symbol, direction,
-    })
-    router.push(`/dashboard/journal?${params.toString()}`)
+  useEffect(() => { loadTrades() }, [loadTrades])
+  useEffect(() => { if (params.get('grade')) setModal(true) }, [params])
+
+  const calcRR = (f = form) => {
+    const entry = parseFloat(f.entry), sl = parseFloat(f.sl), tp = parseFloat(f.tp)
+    if (!entry || !sl || !tp) return f
+    const risk   = Math.abs(entry - sl)
+    const reward = Math.abs(tp - entry)
+    const rr     = risk > 0 ? (reward / risk).toFixed(2) : ''
+    const exit   = parseFloat(f.exit)
+    let pnl = f.pnl
+    if (exit && !isNaN(exit)) {
+      pnl = f.direction === 'LONG'
+        ? ((exit - entry) * 20).toFixed(0)
+        : ((entry - exit) * 20).toFixed(0)
+    }
+    return { ...f, rr, pnl }
   }
 
+  const set = (key, val) => setForm(p => ({ ...p, [key]: val }))
+  const toggleMistake = (m) => setForm(p => ({
+    ...p, mistakes: p.mistakes.includes(m)
+      ? p.mistakes.filter(x => x !== m)
+      : [...p.mistakes, m],
+  }))
+
+  const save = async () => {
+    if (!form.entry || !form.sl || !form.tp) return
+    setSaving(true)
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    const calculated = calcRR()
+    await supabase.from('trades').insert({
+      user_id:   user.id,
+      symbol:    calculated.symbol,
+      date:      calculated.date,
+      session:   calculated.session,
+      direction: calculated.direction,
+      entry:     parseFloat(calculated.entry),
+      sl:        parseFloat(calculated.sl),
+      tp:        parseFloat(calculated.tp),
+      exit:      calculated.exit ? parseFloat(calculated.exit) : null,
+      result:    calculated.result,
+      pnl:       calculated.pnl ? parseFloat(calculated.pnl) : null,
+      rr:        calculated.rr  ? parseFloat(calculated.rr)  : null,
+      grade:     calculated.grade,
+      narrative: calculated.narrative,
+      mistakes:  calculated.mistakes,
+      mood:      calculated.mood,
+    })
+    setModal(false)
+    setForm(emptyForm)
+    await loadTrades()
+    setSaving(false)
+  }
+
+  const F = ({ label, children }) => (
+    <div>
+      <label style={{ display:'block', color:'#888', fontSize:'0.6rem',
+        letterSpacing:'0.15em', textTransform:'uppercase', marginBottom:'0.3rem' }}>
+        {label}
+      </label>
+      {children}
+    </div>
+  )
+
+  const inputStyle = {
+    width:'100%', background:'#1a1a1a', border:'1px solid #2a2a2a',
+    borderRadius:'6px', padding:'0.6rem 0.75rem', color:'#fff',
+    fontSize:'0.88rem', outline:'none', boxSizing:'border-box',
+  }
+
+  const Input = ({ name, type='text', placeholder='' }) => (
+    <input type={type} value={form[name]} placeholder={placeholder}
+      onChange={e => set(name, e.target.value)}
+      onBlur={() => setForm(calcRR)}
+      style={inputStyle} />
+  )
+
+  const Select = ({ name, opts }) => (
+    <select value={form[name]} onChange={e => set(name, e.target.value)} style={inputStyle}>
+      {opts.map(o => <option key={o}>{o}</option>)}
+    </select>
+  )
+
+  const visible = filter === 'ALL' ? trades : trades.filter(t => t.result === filter)
+
   return (
-    <div style={{ maxWidth:700 }}>
-      <div style={{ marginBottom:'1.5rem' }}>
-        <p style={{ color:'#888', fontSize:'0.7rem', letterSpacing:'0.2em',
-          textTransform:'uppercase', margin:'0 0 0.3rem' }}>Pre-Trade</p>
-        <h1 style={{ color:'#fff', fontSize:'1.8rem', fontWeight:900, margin:0 }}>Checklist</h1>
-      </div>
-
-      {/* Symbol + Direction */}
-      <div style={{ background:'#101010', border:'1px solid #1f1f1f', borderRadius:'8px',
-        padding:'1.25rem', marginBottom:'1.5rem', display:'flex', gap:'1.5rem', flexWrap:'wrap' }}>
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start',
+        marginBottom:'1.5rem', flexWrap:'wrap', gap:'1rem' }}>
         <div>
-          <p style={{ color:'#888', fontSize:'0.6rem', letterSpacing:'0.15em',
-            textTransform:'uppercase', margin:'0 0 0.4rem' }}>Symbol</p>
-          <div style={{ display:'flex', gap:'0.5rem' }}>
-            {['NQ','ES'].map(s => (
-              <button key={s} onClick={() => setSymbol(s)} style={{
-                padding:'0.4rem 0.9rem', borderRadius:'5px', fontSize:'0.8rem',
-                fontWeight:700, cursor:'pointer',
-                background: symbol===s ? '#fff' : '#161616',
-                color: symbol===s ? '#000' : '#888',
-                border: symbol===s ? '1px solid #fff' : '1px solid #2a2a2a',
-              }}>{s}</button>
-            ))}
-          </div>
+          <p style={{ color:'#888', fontSize:'0.7rem', letterSpacing:'0.2em',
+            textTransform:'uppercase', margin:'0 0 0.3rem' }}>Cloud Journal</p>
+          <h1 style={{ color:'#fff', fontSize:'1.8rem', fontWeight:900, margin:0 }}>Trades</h1>
         </div>
-        <div>
-          <p style={{ color:'#888', fontSize:'0.6rem', letterSpacing:'0.15em',
-            textTransform:'uppercase', margin:'0 0 0.4rem' }}>Direction</p>
-          <div style={{ display:'flex', gap:'0.5rem' }}>
-            {['LONG','SHORT'].map(d => (
-              <button key={d} onClick={() => setDirection(d)} style={{
-                padding:'0.4rem 0.9rem', borderRadius:'5px', fontSize:'0.8rem',
-                fontWeight:700, cursor:'pointer',
-                background: direction===d ? (d==='LONG'?'#22c55e':'#ef4444') : '#161616',
-                color: direction===d ? '#000' : '#888',
-                border: direction===d
-                  ? `1px solid ${d==='LONG'?'#22c55e':'#ef4444'}`
-                  : '1px solid #2a2a2a',
-              }}>{d}</button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Steps */}
-      <div style={{ display:'flex', flexDirection:'column', gap:'0.75rem', marginBottom:'1.5rem' }}>
-        {STEPS.map((step, i) => {
-          const done = !!checked[step.id]
-          const open = expanded === step.id
-          return (
-            <div key={step.id} style={{
-              background:'#101010',
-              border:`1px solid ${done?'#1a3a1a':'#1f1f1f'}`,
-              borderRadius:'8px', overflow:'hidden', transition:'border-color 0.2s',
-            }}>
-              <div style={{ display:'flex', alignItems:'center', gap:'1rem',
-                padding:'1rem 1.25rem', cursor:'pointer' }}
-                onClick={() => toggle(step.id)}>
-                <div style={{
-                  width:22, height:22, borderRadius:'4px', flexShrink:0,
-                  border:`2px solid ${done?'#22c55e':'#2a2a2a'}`,
-                  background: done ? '#22c55e' : 'transparent',
-                  display:'flex', alignItems:'center', justifyContent:'center',
-                  transition:'all 0.15s',
-                }}>
-                  {done && <span style={{ color:'#000', fontSize:'0.7rem', fontWeight:900 }}>✓</span>}
-                </div>
-                <span style={{ color:done?'#22c55e':'#333', fontSize:'0.7rem',
-                  fontFamily:'monospace', fontWeight:700, flexShrink:0 }}>0{i+1}</span>
-                <div style={{ flex:1 }}>
-                  <p style={{ margin:0, color:done?'#fff':'#ccc',
-                    fontWeight:done?700:400, fontSize:'0.9rem' }}>{step.label}</p>
-                  <p style={{ margin:'0.15rem 0 0', color:'#555', fontSize:'0.72rem' }}>{step.desc}</p>
-                </div>
-                <button onClick={e => { e.stopPropagation(); setExpanded(open?null:step.id) }}
-                  style={{ background:'transparent', border:'none', color:'#555',
-                    cursor:'pointer', fontSize:'1rem', transition:'transform 0.2s',
-                    transform: open?'rotate(180deg)':'rotate(0)' }}>▾</button>
-              </div>
-              {open && (
-                <div style={{ padding:'0.75rem 1.25rem 1rem 3.75rem',
-                  borderTop:'1px solid #1a1a1a' }}>
-                  <p style={{ color:'#888', fontSize:'0.8rem', lineHeight:1.6, margin:0 }}>
-                    {step.detail}
-                  </p>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-
-      {/* Grade */}
-      <div style={{
-        background: gradeInfo.bg,
-        border:`1px solid ${gradeInfo.color}33`,
-        borderRadius:'10px', padding:'1.5rem', marginBottom:'1.5rem',
-        display:'flex', alignItems:'center', gap:'1.5rem',
-      }}>
-        <div style={{ width:72, height:72, borderRadius:'10px',
-          border:`2px solid ${gradeInfo.color}`,
-          display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-          <span style={{ color:gradeInfo.color, fontWeight:900, fontSize:'1.6rem' }}>
-            {gradeInfo.grade}
-          </span>
-        </div>
-        <div>
-          <p style={{ color:'#888', fontSize:'0.62rem', letterSpacing:'0.2em',
-            textTransform:'uppercase', margin:'0 0 0.3rem' }}>
-            Setup Grade · {count}/5 confluence
-          </p>
-          <p style={{ color:gradeInfo.color, fontWeight:800, fontSize:'1rem',
-            letterSpacing:'0.05em', margin:0 }}>{gradeInfo.msg}</p>
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div style={{ display:'flex', gap:'0.75rem', flexWrap:'wrap' }}>
-        <button onClick={goToJournal} style={{
-          padding:'0.75rem 1.5rem', background:'#22c55e', border:'none',
-          borderRadius:'6px', color:'#000', fontWeight:800, fontSize:'0.82rem',
+        <button onClick={() => setModal(true)} style={{
+          padding:'0.7rem 1.25rem', background:'#22c55e', border:'none',
+          borderRadius:'6px', color:'#000', fontWeight:800, fontSize:'0.8rem',
           letterSpacing:'0.15em', textTransform:'uppercase', cursor:'pointer',
-        }}>Log This Trade →</button>
-        <button onClick={reset} style={{
-          padding:'0.75rem 1.25rem', background:'transparent',
-          border:'1px solid #2a2a2a', borderRadius:'6px', color:'#888',
-          fontSize:'0.8rem', cursor:'pointer',
-        }}>Reset</button>
+        }}>+ Log Trade</button>
       </div>
+
+      {/* Filter */}
+      <div style={{ display:'flex', gap:'0.5rem', marginBottom:'1.5rem' }}>
+        {['ALL','WIN','LOSS'].map(f => (
+          <button key={f} onClick={() => setFilter(f)} style={{
+            padding:'0.4rem 1rem', borderRadius:'5px', fontSize:'0.75rem', fontWeight:700,
+            cursor:'pointer',
+            background: filter===f ? '#fff' : 'transparent',
+            color: filter===f ? '#000' : '#888',
+            border: filter===f ? '1px solid #fff' : '1px solid #2a2a2a',
+          }}>{f}</button>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div style={{ background:'#101010', border:'1px solid #1f1f1f',
+        borderRadius:'8px', overflow:'hidden' }}>
+        {loading ? (
+          <div style={{ padding:'3rem', textAlign:'center', color:'#555' }}>Loading…</div>
+        ) : visible.length === 0 ? (
+          <div style={{ padding:'3rem', textAlign:'center', color:'#555' }}>
+            No trades yet. Hit + Log Trade to start.
+          </div>
+        ) : (
+          <div style={{ overflowX:'auto' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse' }}>
+              <thead>
+                <tr>
+                  {['Date','Sym','Dir','Entry','SL','TP','P&L','RR','Grade','Result'].map(h => (
+                    <th key={h} style={{ padding:'0.65rem 0.9rem', textAlign:'left',
+                      color:'#555', fontSize:'0.6rem', letterSpacing:'0.15em',
+                      textTransform:'uppercase', borderBottom:'1px solid #1a1a1a',
+                      whiteSpace:'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map(t => (
+                  <tr key={t.id} style={{ borderBottom:'1px solid #141414' }}>
+                    <td style={{ padding:'0.7rem 0.9rem', color:'#888',
+                      fontFamily:'monospace', fontSize:'0.78rem', whiteSpace:'nowrap' }}>{t.date}</td>
+                    <td style={{ padding:'0.7rem 0.9rem', color:'#fff',
+                      fontWeight:700, fontSize:'0.82rem' }}>{t.symbol}</td>
+                    <td style={{ padding:'0.7rem 0.9rem', fontSize:'0.78rem', fontWeight:700,
+                      color:t.direction==='LONG'?'#22c55e':'#ef4444' }}>{t.direction}</td>
+                    {['entry','sl','tp'].map(k => (
+                      <td key={k} style={{ padding:'0.7rem 0.9rem', color:'#ccc',
+                        fontFamily:'monospace', fontSize:'0.78rem' }}>{t[k]}</td>
+                    ))}
+                    <td style={{ padding:'0.7rem 0.9rem', fontFamily:'monospace',
+                      fontSize:'0.82rem', fontWeight:700,
+                      color:(t.pnl||0)>0?'#22c55e':(t.pnl||0)<0?'#ef4444':'#888' }}>
+                      {t.pnl!=null?`${t.pnl>0?'+':''}${t.pnl}`:'—'}
+                    </td>
+                    <td style={{ padding:'0.7rem 0.9rem', color:'#888',
+                      fontFamily:'monospace', fontSize:'0.78rem' }}>
+                      {t.rr ? `${t.rr}R` : '—'}
+                    </td>
+                    <td style={{ padding:'0.7rem 0.9rem' }}>
+                      <span style={{ fontSize:'0.68rem', fontWeight:800, padding:'2px 7px',
+                        borderRadius:'4px', color:GRADE_COLOR[t.grade]||'#888',
+                        border:`1px solid ${GRADE_COLOR[t.grade]||'#333'}` }}>
+                        {t.grade||'—'}
+                      </span>
+                    </td>
+                    <td style={{ padding:'0.7rem 0.9rem' }}>
+                      <span style={{ fontSize:'0.68rem', fontWeight:800, padding:'2px 8px',
+                        borderRadius:'4px',
+                        background:t.result==='WIN'?'#052e16':t.result==='LOSS'?'#1c0a0a':'#1a1a1a',
+                        color:t.result==='WIN'?'#22c55e':t.result==='LOSS'?'#ef4444':'#888' }}>
+                        {t.result}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Modal */}
+      {modal && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          zIndex:100, padding:'1rem' }}>
+          <div style={{ background:'#111', border:'1px solid #222', borderRadius:'10px',
+            width:'100%', maxWidth:600, maxHeight:'90vh', overflowY:'auto', padding:'1.75rem' }}>
+            <div style={{ display:'flex', justifyContent:'space-between',
+              alignItems:'center', marginBottom:'1.5rem' }}>
+              <h2 style={{ color:'#fff', margin:0, fontSize:'1.1rem', fontWeight:800,
+                letterSpacing:'0.1em', textTransform:'uppercase' }}>Log Trade</h2>
+              <button onClick={() => setModal(false)} style={{ background:'transparent',
+                border:'none', color:'#888', fontSize:'1.3rem', cursor:'pointer' }}>✕</button>
+            </div>
+
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.9rem' }}>
+              <F label="Date"><Input name="date" type="date" /></F>
+              <F label="Symbol"><Select name="symbol" opts={['NQ','ES','MNQ','MES']} /></F>
+              <F label="Session"><Select name="session" opts={['London','NY','Overnight','Asian']} /></F>
+              <F label="Direction"><Select name="direction" opts={['LONG','SHORT']} /></F>
+              <F label="Entry"><Input name="entry" type="number" placeholder="e.g. 21500" /></F>
+              <F label="Stop Loss"><Input name="sl" type="number" placeholder="e.g. 21450" /></F>
+              <F label="Take Profit"><Input name="tp" type="number" placeholder="e.g. 21600" /></F>
+              <F label="Exit Price"><Input name="exit" type="number" placeholder="actual exit" /></F>
+              <F label="Result"><Select name="result" opts={['WIN','LOSS','BE']} /></F>
+              <F label="Grade"><Select name="grade" opts={['A++','A+','A','B','C','F']} /></F>
+              <F label="P&L (auto-calc)"><Input name="pnl" type="number" placeholder="auto" /></F>
+              <F label="RR (auto-calc)"><Input name="rr" type="number" placeholder="auto" /></F>
+            </div>
+
+            <div style={{ marginTop:'0.9rem' }}>
+              <F label="Trade Narrative">
+                <textarea value={form.narrative}
+                  onChange={e => set('narrative', e.target.value)}
+                  rows={3} placeholder="What did you see? Why did you take this trade?"
+                  style={{ ...inputStyle, resize:'vertical', fontFamily:'inherit' }} />
+              </F>
+            </div>
+
+            <div style={{ marginTop:'0.9rem' }}>
+              <label style={{ display:'block', color:'#888', fontSize:'0.6rem',
+                letterSpacing:'0.15em', textTransform:'uppercase', marginBottom:'0.5rem' }}>
+                Mistakes Tagged
+              </label>
+              <div style={{ display:'flex', flexWrap:'wrap', gap:'0.4rem' }}>
+                {MISTAKES.map(m => {
+                  const sel = form.mistakes.includes(m)
+                  return (
+                    <button key={m} onClick={() => toggleMistake(m)} style={{
+                      padding:'0.3rem 0.7rem', borderRadius:'4px', fontSize:'0.72rem',
+                      cursor:'pointer',
+                      background: sel ? '#1c0a0a' : 'transparent',
+                      color: sel ? '#ef4444' : '#555',
+                      border: sel ? '1px solid #ef444450' : '1px solid #2a2a2a',
+                    }}>{m}</button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div style={{ marginTop:'0.9rem' }}>
+              <label style={{ display:'block', color:'#888', fontSize:'0.6rem',
+                letterSpacing:'0.15em', textTransform:'uppercase', marginBottom:'0.5rem' }}>
+                Mood
+              </label>
+              <div style={{ display:'flex', gap:'0.5rem' }}>
+                {[{v:1,e:'😤',l:'Revenge'},{v:2,e:'😟',l:'Anxious'},
+                  {v:3,e:'😐',l:'Neutral'},{v:4,e:'😊',l:'Focused'},{v:5,e:'🎯',l:'Zone'}]
+                  .map(({ v, e, l }) => (
+                    <button key={v} onClick={() => set('mood', v)} style={{
+                      flex:1, padding:'0.5rem 0.25rem', borderRadius:'6px',
+                      cursor:'pointer', fontSize:'1.1rem', textAlign:'center',
+                      background: form.mood===v ? '#1a2a1a' : '#1a1a1a',
+                      border: form.mood===v ? '1px solid #22c55e' : '1px solid #2a2a2a',
+                    }}>
+                      <div>{e}</div>
+                      <div style={{ fontSize:'0.55rem', color:'#888', marginTop:'2px' }}>{l}</div>
+                    </button>
+                  ))}
+              </div>
+            </div>
+
+            <div style={{ display:'flex', gap:'0.75rem', marginTop:'1.5rem' }}>
+              <button onClick={save} disabled={saving} style={{
+                flex:1, padding:'0.8rem', background:'#22c55e', border:'none',
+                borderRadius:'6px', color:'#000', fontWeight:800, fontSize:'0.82rem',
+                letterSpacing:'0.15em', textTransform:'uppercase', cursor:'pointer',
+              }}>{saving ? 'SAVING…' : 'SAVE TRADE →'}</button>
+              <button onClick={() => setModal(false)} style={{
+                padding:'0.8rem 1.25rem', background:'transparent',
+                border:'1px solid #2a2a2a', borderRadius:'6px',
+                color:'#888', fontSize:'0.8rem', cursor:'pointer',
+              }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
