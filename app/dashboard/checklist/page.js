@@ -1,163 +1,199 @@
 'use client'
-import { useEffect, useState } from 'react'
-import Link from 'next/link'
-import { createClient } from '@/lib/supabase'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 
-const GRADE_COLOR = {
-  'A++':'#eab308','A+':'#22c55e','A':'#86efac','B':'#3b82f6','C':'#f59e0b','F':'#ef4444'
+const STEPS = [
+  {
+    id: 'fourh_tpd',
+    label: '4H TPD in Direction',
+    desc: 'Three-candle TPD between NQ and ES at the 4H swing confirming bias.',
+    detail: 'NQ and ES must show divergence at the 4H swing. One makes a new high/low while the other fails → confirms expansion direction.',
+  },
+  {
+    id: 'daily_smt',
+    label: 'Daily SMT on M15',
+    desc: 'Sequential SMT divergence on the Daily cycle visible on M15 after a swing.',
+    detail: 'NQ vs ES: one prints a new swing high/low on M15 while the other does not. Primary confluence. NO Daily SMT = NO trade.',
+  },
+  {
+    id: 'ninety_smt',
+    label: '90M SMT on M5 (after Daily)',
+    desc: '90-minute cycle SMT confirming the Daily SMT — must occur AFTER daily SMT.',
+    detail: 'On M5, after Daily SMT prints, wait for 90M SMT in same direction. Two-stage SSMT = highest probability.',
+  },
+  {
+    id: 'm5_tpd',
+    label: 'M5 TPD Entry Trigger',
+    desc: 'Three-candle TPD on M5 at the CISD of TPD reversion level — actual entry trigger.',
+    detail: 'M5 TPD fires at the CISD level from Daily TPD. PSP → CISD → M5 TPD chain. Stop on swing high/low of TPD candle.',
+  },
+  {
+    id: 'true_opens',
+    label: 'Both True Opens Aligned',
+    desc: 'Price on correct side of BOTH Daily TO (12AM) and session TO.',
+    detail: 'Longs: price below both Daily TO and NY TO (7:30AM). Shorts: above both. Selling above TWO true opens = highest probability bearish.',
+  },
+]
+
+const GRADES = {
+  5: { grade:'A++', color:'#eab308', bg:'#1a1500', msg:'EXECUTE — FULL CONFLUENCE' },
+  4: { grade:'A+',  color:'#22c55e', bg:'#052e16', msg:'STRONG SETUP — EXECUTE' },
+  3: { grade:'A',   color:'#86efac', bg:'#041f10', msg:'GOOD SETUP — PROCEED WITH DISCIPLINE' },
+  2: { grade:'B',   color:'#3b82f6', bg:'#0c1b38', msg:'PARTIAL CONFLUENCE — CAUTION' },
+  1: { grade:'C',   color:'#f59e0b', bg:'#1c1000', msg:'WEAK SETUP — WAIT FOR MORE CONFLUENCE' },
+  0: { grade:'F',   color:'#ef4444', bg:'#1c0a0a', msg:'NO TRADE — STAND ASIDE' },
 }
 
-export default function DashboardPage() {
-  const [trades,  setTrades]  = useState([])
-  const [loading, setLoading] = useState(true)
+export default function ChecklistPage() {
+  const [checked,   setChecked]   = useState({})
+  const [expanded,  setExpanded]  = useState(null)
+  const [symbol,    setSymbol]    = useState('NQ')
+  const [direction, setDirection] = useState('LONG')
+  const router = useRouter()
 
-  useEffect(() => {
-    const load = async () => {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data } = await supabase
-        .from('trades')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-      setTrades(data || [])
-      setLoading(false)
-    }
-    load()
-  }, [])
+  const count     = STEPS.filter(s => checked[s.id]).length
+  const gradeInfo = GRADES[count]
 
-  const wins    = trades.filter(t => t.result === 'WIN').length
-  const losses  = trades.filter(t => t.result === 'LOSS').length
-  const total   = trades.length
-  const winRate = total ? Math.round((wins / total) * 100) : 0
-  const totalPnl = trades.reduce((s, t) => s + (t.pnl || 0), 0)
-  const rrTrades = trades.filter(t => t.rr)
-  const avgRR   = rrTrades.length
-    ? (rrTrades.reduce((s,t)=>s+t.rr,0)/rrTrades.length).toFixed(2) : '—'
-  let streak = 0
-  for (const t of trades) { if (t.result==='WIN') streak++; else break }
+  const toggle = (id) => setChecked(p => ({ ...p, [id]: !p[id] }))
+  const reset  = () => setChecked({})
 
-  const Card = ({ label, value, sub, color='#fff' }) => (
-    <div style={{ background:'#101010', border:'1px solid #1f1f1f',
-      borderRadius:'8px', padding:'1.25rem', flex:1, minWidth:130 }}>
-      <p style={{ color:'#888', fontSize:'0.62rem', letterSpacing:'0.2em',
-        textTransform:'uppercase', margin:'0 0 0.4rem' }}>{label}</p>
-      <p style={{ color, fontSize:'1.9rem', fontWeight:800, margin:'0 0 0.2rem',
-        fontFamily:'monospace' }}>{value}</p>
-      {sub && <p style={{ color:'#555', fontSize:'0.7rem', margin:0 }}>{sub}</p>}
-    </div>
-  )
+  const goToJournal = () => {
+    const params = new URLSearchParams({
+      grade: gradeInfo.grade, symbol, direction,
+    })
+    router.push(`/dashboard/journal?${params.toString()}`)
+  }
 
   return (
-    <div>
+    <div style={{ maxWidth:700 }}>
       <div style={{ marginBottom:'1.5rem' }}>
         <p style={{ color:'#888', fontSize:'0.7rem', letterSpacing:'0.2em',
-          textTransform:'uppercase', margin:'0 0 0.3rem' }}>Dashboard</p>
-        <h1 style={{ color:'#fff', fontSize:'1.8rem', fontWeight:900, margin:0 }}>Overview</h1>
+          textTransform:'uppercase', margin:'0 0 0.3rem' }}>Pre-Trade</p>
+        <h1 style={{ color:'#fff', fontSize:'1.8rem', fontWeight:900, margin:0 }}>Checklist</h1>
       </div>
 
-      {/* Quick actions */}
-      <div style={{ display:'flex', gap:'0.75rem', marginBottom:'2rem', flexWrap:'wrap' }}>
-        {[
-          { href:'/dashboard/checklist', label:'Run Pre-Trade Check', primary:true },
-          { href:'/dashboard/journal',   label:'Log New Trade',       primary:false },
-          { href:'/dashboard/analyzer',  label:'Analyze Chart →',    primary:false },
-        ].map(({ href, label, primary }) => (
-          <Link key={href} href={href} style={{
-            padding:'0.7rem 1.25rem', background: primary ? '#22c55e' : 'transparent',
-            border:`1px solid ${primary ? '#22c55e' : '#2a2a2a'}`,
-            borderRadius:'6px', color: primary ? '#000' : '#fff',
-            textDecoration:'none', fontSize:'0.8rem',
-            fontWeight: primary ? 800 : 500, transition:'all 0.15s',
-          }}>{label}</Link>
-        ))}
-      </div>
-
-      {loading ? (
-        <p style={{ color:'#555', fontSize:'0.85rem' }}>Loading…</p>
-      ) : (
-        <>
-          <div style={{ display:'flex', gap:'1rem', marginBottom:'2rem', flexWrap:'wrap' }}>
-            <Card label="Win Rate" value={`${winRate}%`}
-              sub={`${wins}W · ${losses}L · ${total} trades`}
-              color={winRate>=60?'#22c55e':winRate>=45?'#f59e0b':'#ef4444'} />
-            <Card label="Total P&L"
-              value={`${totalPnl>0?'+':''}${totalPnl.toFixed(0)}`} sub="points"
-              color={totalPnl>0?'#22c55e':totalPnl<0?'#ef4444':'#fff'} />
-            <Card label="Avg RR"     value={avgRR}  sub="risk/reward" />
-            <Card label="Win Streak" value={streak} sub="current"
-              color={streak>=3?'#22c55e':'#fff'} />
+      {/* Symbol + Direction */}
+      <div style={{ background:'#101010', border:'1px solid #1f1f1f', borderRadius:'8px',
+        padding:'1.25rem', marginBottom:'1.5rem', display:'flex', gap:'1.5rem', flexWrap:'wrap' }}>
+        <div>
+          <p style={{ color:'#888', fontSize:'0.6rem', letterSpacing:'0.15em',
+            textTransform:'uppercase', margin:'0 0 0.4rem' }}>Symbol</p>
+          <div style={{ display:'flex', gap:'0.5rem' }}>
+            {['NQ','ES'].map(s => (
+              <button key={s} onClick={() => setSymbol(s)} style={{
+                padding:'0.4rem 0.9rem', borderRadius:'5px', fontSize:'0.8rem',
+                fontWeight:700, cursor:'pointer',
+                background: symbol===s ? '#fff' : '#161616',
+                color: symbol===s ? '#000' : '#888',
+                border: symbol===s ? '1px solid #fff' : '1px solid #2a2a2a',
+              }}>{s}</button>
+            ))}
           </div>
+        </div>
+        <div>
+          <p style={{ color:'#888', fontSize:'0.6rem', letterSpacing:'0.15em',
+            textTransform:'uppercase', margin:'0 0 0.4rem' }}>Direction</p>
+          <div style={{ display:'flex', gap:'0.5rem' }}>
+            {['LONG','SHORT'].map(d => (
+              <button key={d} onClick={() => setDirection(d)} style={{
+                padding:'0.4rem 0.9rem', borderRadius:'5px', fontSize:'0.8rem',
+                fontWeight:700, cursor:'pointer',
+                background: direction===d ? (d==='LONG'?'#22c55e':'#ef4444') : '#161616',
+                color: direction===d ? '#000' : '#888',
+                border: direction===d
+                  ? `1px solid ${d==='LONG'?'#22c55e':'#ef4444'}`
+                  : '1px solid #2a2a2a',
+              }}>{d}</button>
+            ))}
+          </div>
+        </div>
+      </div>
 
-          {/* Recent trades table */}
-          <div style={{ background:'#101010', border:'1px solid #1f1f1f',
-            borderRadius:'8px', overflow:'hidden' }}>
-            <div style={{ padding:'1rem 1.5rem', borderBottom:'1px solid #1a1a1a',
-              display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-              <p style={{ color:'#fff', fontWeight:700, fontSize:'0.85rem',
-                letterSpacing:'0.1em', textTransform:'uppercase', margin:0 }}>Recent Trades</p>
-              <Link href="/dashboard/journal" style={{ color:'#888', fontSize:'0.75rem',
-                textDecoration:'none' }}>View all →</Link>
+      {/* Steps */}
+      <div style={{ display:'flex', flexDirection:'column', gap:'0.75rem', marginBottom:'1.5rem' }}>
+        {STEPS.map((step, i) => {
+          const done = !!checked[step.id]
+          const open = expanded === step.id
+          return (
+            <div key={step.id} style={{
+              background:'#101010',
+              border:`1px solid ${done?'#1a3a1a':'#1f1f1f'}`,
+              borderRadius:'8px', overflow:'hidden', transition:'border-color 0.2s',
+            }}>
+              <div style={{ display:'flex', alignItems:'center', gap:'1rem',
+                padding:'1rem 1.25rem', cursor:'pointer' }}
+                onClick={() => toggle(step.id)}>
+                <div style={{
+                  width:22, height:22, borderRadius:'4px', flexShrink:0,
+                  border:`2px solid ${done?'#22c55e':'#2a2a2a'}`,
+                  background: done ? '#22c55e' : 'transparent',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  transition:'all 0.15s',
+                }}>
+                  {done && <span style={{ color:'#000', fontSize:'0.7rem', fontWeight:900 }}>✓</span>}
+                </div>
+                <span style={{ color:done?'#22c55e':'#333', fontSize:'0.7rem',
+                  fontFamily:'monospace', fontWeight:700, flexShrink:0 }}>0{i+1}</span>
+                <div style={{ flex:1 }}>
+                  <p style={{ margin:0, color:done?'#fff':'#ccc',
+                    fontWeight:done?700:400, fontSize:'0.9rem' }}>{step.label}</p>
+                  <p style={{ margin:'0.15rem 0 0', color:'#555', fontSize:'0.72rem' }}>{step.desc}</p>
+                </div>
+                <button onClick={e => { e.stopPropagation(); setExpanded(open?null:step.id) }}
+                  style={{ background:'transparent', border:'none', color:'#555',
+                    cursor:'pointer', fontSize:'1rem', transition:'transform 0.2s',
+                    transform: open?'rotate(180deg)':'rotate(0)' }}>▾</button>
+              </div>
+              {open && (
+                <div style={{ padding:'0.75rem 1.25rem 1rem 3.75rem',
+                  borderTop:'1px solid #1a1a1a' }}>
+                  <p style={{ color:'#888', fontSize:'0.8rem', lineHeight:1.6, margin:0 }}>
+                    {step.detail}
+                  </p>
+                </div>
+              )}
             </div>
+          )
+        })}
+      </div>
 
-            {trades.length === 0 ? (
-              <div style={{ padding:'3rem', textAlign:'center' }}>
-                <p style={{ color:'#555', fontSize:'0.9rem', margin:'0 0 1rem' }}>No trades yet.</p>
-                <Link href="/dashboard/checklist" style={{ color:'#22c55e',
-                  fontSize:'0.8rem', textDecoration:'none' }}>
-                  Run your first pre-trade check →
-                </Link>
-              </div>
-            ) : (
-              <div style={{ overflowX:'auto' }}>
-                <table style={{ width:'100%', borderCollapse:'collapse' }}>
-                  <thead>
-                    <tr>
-                      {['Date','Symbol','Dir','Result','P&L','Grade'].map(h => (
-                        <th key={h} style={{ padding:'0.6rem 1rem', textAlign:'left',
-                          color:'#555', fontSize:'0.62rem', letterSpacing:'0.15em',
-                          textTransform:'uppercase', borderBottom:'1px solid #1a1a1a' }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {trades.slice(0,8).map(t => (
-                      <tr key={t.id} style={{ borderBottom:'1px solid #141414' }}>
-                        <td style={{ padding:'0.7rem 1rem', color:'#888',
-                          fontSize:'0.78rem', fontFamily:'monospace' }}>{t.date}</td>
-                        <td style={{ padding:'0.7rem 1rem', color:'#fff',
-                          fontWeight:700, fontSize:'0.85rem' }}>{t.symbol}</td>
-                        <td style={{ padding:'0.7rem 1rem', fontSize:'0.8rem', fontWeight:700,
-                          color:t.direction==='LONG'?'#22c55e':'#ef4444' }}>{t.direction}</td>
-                        <td style={{ padding:'0.7rem 1rem' }}>
-                          <span style={{ fontSize:'0.7rem', fontWeight:800, padding:'2px 8px',
-                            borderRadius:'4px',
-                            background:t.result==='WIN'?'#052e16':t.result==='LOSS'?'#1c0a0a':'#1a1a1a',
-                            color:t.result==='WIN'?'#22c55e':t.result==='LOSS'?'#ef4444':'#888',
-                          }}>{t.result}</span>
-                        </td>
-                        <td style={{ padding:'0.7rem 1rem', fontFamily:'monospace',
-                          fontSize:'0.85rem', fontWeight:700,
-                          color:(t.pnl||0)>0?'#22c55e':(t.pnl||0)<0?'#ef4444':'#888' }}>
-                          {t.pnl!=null?`${t.pnl>0?'+':''}${t.pnl}`:'—'}
-                        </td>
-                        <td style={{ padding:'0.7rem 1rem' }}>
-                          <span style={{ fontSize:'0.7rem', fontWeight:800, padding:'2px 8px',
-                            borderRadius:'4px', color:GRADE_COLOR[t.grade]||'#888',
-                            border:`1px solid ${GRADE_COLOR[t.grade]||'#333'}` }}>
-                            {t.grade||'—'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </>
-      )}
+      {/* Grade */}
+      <div style={{
+        background: gradeInfo.bg,
+        border:`1px solid ${gradeInfo.color}33`,
+        borderRadius:'10px', padding:'1.5rem', marginBottom:'1.5rem',
+        display:'flex', alignItems:'center', gap:'1.5rem',
+      }}>
+        <div style={{ width:72, height:72, borderRadius:'10px',
+          border:`2px solid ${gradeInfo.color}`,
+          display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+          <span style={{ color:gradeInfo.color, fontWeight:900, fontSize:'1.6rem' }}>
+            {gradeInfo.grade}
+          </span>
+        </div>
+        <div>
+          <p style={{ color:'#888', fontSize:'0.62rem', letterSpacing:'0.2em',
+            textTransform:'uppercase', margin:'0 0 0.3rem' }}>
+            Setup Grade · {count}/5 confluence
+          </p>
+          <p style={{ color:gradeInfo.color, fontWeight:800, fontSize:'1rem',
+            letterSpacing:'0.05em', margin:0 }}>{gradeInfo.msg}</p>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display:'flex', gap:'0.75rem', flexWrap:'wrap' }}>
+        <button onClick={goToJournal} style={{
+          padding:'0.75rem 1.5rem', background:'#22c55e', border:'none',
+          borderRadius:'6px', color:'#000', fontWeight:800, fontSize:'0.82rem',
+          letterSpacing:'0.15em', textTransform:'uppercase', cursor:'pointer',
+        }}>Log This Trade →</button>
+        <button onClick={reset} style={{
+          padding:'0.75rem 1.25rem', background:'transparent',
+          border:'1px solid #2a2a2a', borderRadius:'6px', color:'#888',
+          fontSize:'0.8rem', cursor:'pointer',
+        }}>Reset</button>
+      </div>
     </div>
   )
 }
