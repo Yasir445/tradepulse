@@ -2,31 +2,32 @@
 import { useState, useRef, useCallback } from 'react'
 
 const GRADE_COLOR = {
-  'A++':'#eab308','A+':'#22c55e','A':'#86efac','B':'#3b82f6','C':'#f59e0b','F':'#ef4444'
+  'A++':'#f59e0b','A+':'#10b981','A':'#34d399','B':'#6366f1','C':'#f97316','F':'#ef4444'
 }
 
 const SYSTEM = `You are an expert Quarterly Theory (QT) and ICT framework analyst for NQ/ES futures.
 
 QT Reference:
 - Q1=Accumulation, Q2=Manipulation, Q3=Distribution, Q4=Reversal
-- SSMT = Sequential SMT divergence (NQ vs ES divergence at swing)
-- TPD = Three-candle Pattern Divergence
-- True Opens: Daily=12AM, London=1:30AM, NY=7:30AM EST
+- SSMT = Sequential SMT divergence (NQ vs ES divergence at swing high/low)
+- TPD = Three-candle Pattern Divergence — one asset makes new swing, other fails
+- True Opens: Daily=12AM EST, London=1:30AM, NY=7:30AM
 - Best entries: 9:00-10:30 NY (Q3ofQ3)
-- Grade A++: Full confluence. A+: SSMT+TPD+True Open. A: SSMT+TPD. B: SSMT only. C: Partial. F: No setup.
-- If only one asset shown, note SSMT cannot be confirmed.
+- Two-stage SSMT = highest probability setup
+- Grade A++: Full confluence (5/5). A+: 4/5. A: 3/5. B: 2/5. C: 1/5. F: No setup.
+- If only one asset shown, note SSMT cannot be fully confirmed.
 
-Return ONLY valid JSON, no markdown, no backticks:
+Analyze this chart and return ONLY valid JSON with no markdown, no backticks:
 {
   "cycle": "detected cycle e.g. Q3 of Daily",
   "bias": "BULLISH or BEARISH",
   "ssmt_detected": true or false,
   "tpd_detected": true or false,
-  "true_open_position": "description",
-  "entry_zone": "description",
-  "stop_loss": "description",
-  "target": "description",
-  "invalidation": "description",
+  "true_open_position": "e.g. Price below Daily TO + NY TO — bullish",
+  "entry_zone": "specific price zone or candle description",
+  "stop_loss": "where to place SL",
+  "target": "DOL or target level",
+  "invalidation": "what invalidates the setup",
   "grade": "A++ or A+ or A or B or C or F",
   "grade_reasons": ["reason 1", "reason 2"],
   "key_observations": ["obs 1", "obs 2", "obs 3"],
@@ -46,11 +47,7 @@ export default function AnalyzerPage() {
     if (!file.type.startsWith('image/')) { setError('Please upload an image file.'); return }
     setMimeType(file.type)
     const r = new FileReader()
-    r.onload = () => {
-      setImage(r.result.split(',')[1])
-      setResult(null)
-      setError('')
-    }
+    r.onload = () => { setImage(r.result.split(',')[1]); setResult(null); setError('') }
     r.readAsDataURL(file)
   }
 
@@ -64,212 +61,251 @@ export default function AnalyzerPage() {
     if (!image) return
     setLoading(true); setError(''); setResult(null)
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      // Use our own API route to avoid CORS
+      const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          system: SYSTEM,
-          messages: [{
-            role: 'user',
-            content: [
-              { type:'image', source:{ type:'base64', media_type:mimeType, data:image } },
-              { type:'text',  text:'Analyze this chart using the QT framework. Return only JSON.' },
-            ],
-          }],
-        }),
+        body: JSON.stringify({ image, mimeType, system: SYSTEM }),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error?.message || 'API error')
-      const raw   = data.content?.find(b => b.type==='text')?.text || ''
-      const clean = raw.replace(/```json|```/g,'').trim()
-      setResult(JSON.parse(clean))
+      if (!res.ok) throw new Error(data.error || 'Analysis failed')
+      setResult(data)
     } catch (e) {
-      setError(e.message || 'Analysis failed.')
+      setError(e.message || 'Analysis failed. Please try again.')
     }
     setLoading(false)
   }
 
   const Yes = ({ v }) => (
-    <span style={{ fontSize:'0.72rem', fontWeight:800, padding:'2px 8px', borderRadius:'4px',
-      background:v?'#052e16':'#1c0a0a', color:v?'#22c55e':'#ef4444' }}>
-      {v ? 'YES' : 'NO'}
-    </span>
+    <span style={{
+      fontSize:'0.68rem', fontWeight:800, padding:'2px 8px', borderRadius:'5px',
+      background:v?'rgba(16,185,129,0.12)':'rgba(239,68,68,0.12)',
+      color:v?'#10b981':'#ef4444',
+    }}>{v?'✓ YES':'✗ NO'}</span>
   )
 
   return (
-    <div style={{ maxWidth:780 }}>
-      <div style={{ marginBottom:'1.5rem' }}>
-        <p style={{ color:'#888', fontSize:'0.7rem', letterSpacing:'0.2em',
-          textTransform:'uppercase', margin:'0 0 0.3rem' }}>AI · Free</p>
-        <h1 style={{ color:'#fff', fontSize:'1.8rem', fontWeight:900, margin:0 }}>Chart Analyzer</h1>
-        <p style={{ color:'#555', fontSize:'0.82rem', marginTop:'0.4rem' }}>
-          Upload any chart screenshot → get a full QT framework breakdown.
+    <div>
+      <style>{`
+        .upload-zone { transition: all 0.2s ease; }
+        .upload-zone:hover { border-color: #4f46e5 !important; }
+      `}</style>
+
+      {/* Header */}
+      <div style={{ marginBottom:'1.5rem', paddingBottom:'1rem', borderBottom:'1px solid #1e293b' }}>
+        <p style={{ color:'#6366f1', fontSize:'0.65rem', letterSpacing:'0.25em',
+          textTransform:'uppercase', margin:'0 0 0.25rem', fontWeight:700 }}>
+          Powered by Claude AI
+        </p>
+        <h1 style={{ color:'#f8fafc', fontSize:'1.75rem', fontWeight:900,
+          margin:'0 0 0.3rem', letterSpacing:'-0.03em' }}>Chart Analyzer</h1>
+        <p style={{ color:'#475569', fontSize:'0.8rem', margin:0 }}>
+          Upload any TradingView screenshot → get instant QT framework analysis
         </p>
       </div>
 
       {/* Upload zone */}
       <div
+        className="upload-zone"
         onDrop={onDrop}
         onDragOver={e => { e.preventDefault(); setDrag(true) }}
         onDragLeave={() => setDrag(false)}
         onClick={() => fileRef.current?.click()}
         style={{
-          border:`2px dashed ${drag?'#22c55e':image?'#22c55e55':'#2a2a2a'}`,
-          borderRadius:'10px', padding:'2.5rem', textAlign:'center',
-          cursor:'pointer', background:drag?'#052e1620':'#101010',
-          transition:'all 0.2s', marginBottom:'1rem',
+          border:`2px dashed ${drag?'#6366f1':image?'rgba(16,185,129,0.5)':'#1e293b'}`,
+          borderRadius:'16px', padding:'2rem', textAlign:'center', cursor:'pointer',
+          background:drag?'rgba(99,102,241,0.05)':'linear-gradient(135deg, #0f172a, #1a1a2e)',
+          marginBottom:'1rem', transition:'all 0.2s',
         }}
       >
         <input ref={fileRef} type="file" accept="image/*"
           onChange={onFile} style={{ display:'none' }} />
+
         {image ? (
           <div>
             <img src={`data:${mimeType};base64,${image}`} alt="Chart"
-              style={{ maxHeight:280, maxWidth:'100%', borderRadius:'6px', objectFit:'contain' }} />
-            <p style={{ color:'#22c55e', fontSize:'0.75rem', marginTop:'0.75rem', marginBottom:0 }}>
+              style={{ maxHeight:240, maxWidth:'100%', borderRadius:'10px',
+                objectFit:'contain', border:'1px solid #1e293b' }} />
+            <p style={{ color:'#10b981', fontSize:'0.72rem', marginTop:'0.75rem',
+              marginBottom:0, fontWeight:600 }}>
               ✓ Chart loaded — click to replace
             </p>
           </div>
         ) : (
-          <>
-            <div style={{ fontSize:'2.5rem', marginBottom:'0.75rem' }}>📤</div>
-            <p style={{ color:'#888', fontSize:'0.85rem', margin:'0 0 0.3rem' }}>
-              Drop chart screenshot here or click to upload
+          <div>
+            <div style={{
+              width:56, height:56, borderRadius:'14px', margin:'0 auto 1rem',
+              background:'linear-gradient(135deg, rgba(79,70,229,0.2), rgba(124,58,237,0.1))',
+              border:'1px solid rgba(99,102,241,0.2)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              fontSize:'1.5rem',
+            }}>📊</div>
+            <p style={{ color:'#94a3b8', fontSize:'0.85rem', margin:'0 0 0.3rem', fontWeight:600 }}>
+              Drop chart screenshot here
             </p>
-            <p style={{ color:'#444', fontSize:'0.72rem', margin:0 }}>
+            <p style={{ color:'#334155', fontSize:'0.72rem', margin:0 }}>
               PNG, JPG · TradingView screenshots work best
             </p>
-          </>
+          </div>
         )}
       </div>
 
       {image && (
         <button onClick={analyze} disabled={loading} style={{
           width:'100%', padding:'0.9rem',
-          background:loading?'#1a1a1a':'#22c55e', border:'none',
-          borderRadius:'8px', color:loading?'#555':'#000',
-          fontWeight:800, fontSize:'0.85rem', letterSpacing:'0.2em',
+          background: loading ? '#1e293b' : 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+          border:'none', borderRadius:'12px',
+          color: loading ? '#475569' : '#fff',
+          fontWeight:800, fontSize:'0.85rem', letterSpacing:'0.15em',
           textTransform:'uppercase', cursor:loading?'not-allowed':'pointer',
-          marginBottom:'1.5rem',
+          marginBottom:'1.25rem',
+          boxShadow: loading ? 'none' : '0 4px 20px rgba(79,70,229,0.4)',
+          transition:'all 0.2s',
         }}>
-          {loading ? '⚡ ANALYZING…' : '⚡ ANALYZE QT FRAMEWORK →'}
+          {loading ? '⚡ ANALYZING WITH CLAUDE AI…' : '⚡ ANALYZE QT FRAMEWORK →'}
         </button>
       )}
 
       {error && (
-        <div style={{ background:'#1c0a0a', border:'1px solid #ef444433',
-          borderRadius:'8px', padding:'1rem', color:'#ef4444',
-          fontSize:'0.82rem', marginBottom:'1.5rem' }}>{error}</div>
+        <div style={{
+          background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.2)',
+          borderRadius:'12px', padding:'1rem', color:'#ef4444',
+          fontSize:'0.82rem', marginBottom:'1.25rem',
+        }}>⚠️ {error}</div>
       )}
 
       {result && (
-        <div style={{ display:'flex', flexDirection:'column', gap:'1rem' }}>
-          {/* Grade + Bias */}
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'1rem' }}>
-            <div style={{ background:'#101010',
-              border:`1px solid ${GRADE_COLOR[result.grade]||'#1f1f1f'}33`,
-              borderRadius:'8px', padding:'1.5rem', textAlign:'center' }}>
-              <p style={{ color:'#888', fontSize:'0.62rem', letterSpacing:'0.2em',
-                textTransform:'uppercase', margin:'0 0 0.5rem' }}>Setup Grade</p>
-              <p style={{ color:GRADE_COLOR[result.grade]||'#fff', fontSize:'3rem',
-                fontWeight:900, margin:'0 0 0.25rem' }}>{result.grade}</p>
+        <div style={{ display:'flex', flexDirection:'column', gap:'0.75rem' }}>
+          {/* Grade + Bias hero */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.75rem' }}>
+            <div style={{
+              background:'linear-gradient(135deg, #0f172a, #1a1a2e)',
+              border:`1px solid ${GRADE_COLOR[result.grade]||'#1e293b'}33`,
+              borderRadius:'16px', padding:'1.5rem', textAlign:'center',
+            }}>
+              <p style={{ color:'#475569', fontSize:'0.6rem', letterSpacing:'0.2em',
+                textTransform:'uppercase', margin:'0 0 0.5rem', fontWeight:600 }}>Setup Grade</p>
+              <div style={{
+                width:64, height:64, borderRadius:'16px', margin:'0 auto 0.75rem',
+                background:`${GRADE_COLOR[result.grade]||'#94a3b8'}15`,
+                border:`2px solid ${GRADE_COLOR[result.grade]||'#94a3b8'}`,
+                display:'flex', alignItems:'center', justifyContent:'center',
+              }}>
+                <span style={{ color:GRADE_COLOR[result.grade]||'#f8fafc',
+                  fontSize:'1.5rem', fontWeight:900 }}>{result.grade}</span>
+              </div>
               {result.grade_reasons.map((r,i) => (
-                <p key={i} style={{ color:'#666', fontSize:'0.72rem', margin:'0.2rem 0' }}>• {r}</p>
+                <p key={i} style={{ color:'#475569', fontSize:'0.65rem',
+                  margin:'0.2rem 0', textAlign:'left' }}>• {r}</p>
               ))}
             </div>
-            <div style={{ background:'#101010',
-              border:`1px solid ${result.bias==='BULLISH'?'#22c55e33':'#ef444433'}`,
-              borderRadius:'8px', padding:'1.5rem', textAlign:'center' }}>
-              <p style={{ color:'#888', fontSize:'0.62rem', letterSpacing:'0.2em',
-                textTransform:'uppercase', margin:'0 0 0.5rem' }}>Bias</p>
-              <p style={{ fontSize:'2rem', fontWeight:900, margin:'0 0 0.5rem',
-                color:result.bias==='BULLISH'?'#22c55e':'#ef4444' }}>
+
+            <div style={{
+              background:'linear-gradient(135deg, #0f172a, #1a1a2e)',
+              border:`1px solid ${result.bias==='BULLISH'?'rgba(16,185,129,0.25)':'rgba(239,68,68,0.25)'}`,
+              borderRadius:'16px', padding:'1.5rem', textAlign:'center',
+            }}>
+              <p style={{ color:'#475569', fontSize:'0.6rem', letterSpacing:'0.2em',
+                textTransform:'uppercase', margin:'0 0 0.5rem', fontWeight:600 }}>Bias</p>
+              <div style={{
+                width:64, height:64, borderRadius:'16px', margin:'0 auto 0.75rem',
+                background:result.bias==='BULLISH'?'rgba(16,185,129,0.1)':'rgba(239,68,68,0.1)',
+                border:`2px solid ${result.bias==='BULLISH'?'rgba(16,185,129,0.4)':'rgba(239,68,68,0.4)'}`,
+                display:'flex', alignItems:'center', justifyContent:'center',
+                fontSize:'1.75rem',
+              }}>
                 {result.bias==='BULLISH'?'▲':'▼'}
-              </p>
-              <p style={{ color:result.bias==='BULLISH'?'#22c55e':'#ef4444',
-                fontWeight:800, fontSize:'0.9rem', margin:0 }}>{result.bias}</p>
-              <p style={{ color:'#555', fontSize:'0.72rem', marginTop:'0.25rem' }}>
-                {result.session}
-              </p>
+              </div>
+              <p style={{ color:result.bias==='BULLISH'?'#10b981':'#ef4444',
+                fontWeight:800, fontSize:'0.9rem', margin:'0 0 0.25rem' }}>{result.bias}</p>
+              <p style={{ color:'#475569', fontSize:'0.68rem', margin:0 }}>{result.session}</p>
             </div>
           </div>
 
           {/* Confluence */}
-          <div style={{ background:'#101010', border:'1px solid #1f1f1f',
-            borderRadius:'8px', padding:'1.25rem' }}>
-            <p style={{ color:'#888', fontSize:'0.62rem', letterSpacing:'0.2em',
-              textTransform:'uppercase', margin:'0 0 1rem' }}>Confluence Checks</p>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.75rem',
-              marginBottom:'0.75rem' }}>
-              {[{label:'SSMT Detected',v:result.ssmt_detected},
-                {label:'TPD Detected', v:result.tpd_detected}].map(({ label, v }) => (
+          <div style={{
+            background:'linear-gradient(135deg, #0f172a, #1a1a2e)',
+            border:'1px solid #1e293b', borderRadius:'16px', padding:'1.25rem',
+          }}>
+            <p style={{ color:'#475569', fontSize:'0.6rem', letterSpacing:'0.2em',
+              textTransform:'uppercase', margin:'0 0 1rem', fontWeight:600 }}>Confluence Checks</p>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.5rem', marginBottom:'0.75rem' }}>
+              {[{label:'SSMT',v:result.ssmt_detected},{label:'TPD',v:result.tpd_detected}]
+                .map(({label,v}) => (
                 <div key={label} style={{ display:'flex', alignItems:'center',
                   justifyContent:'space-between', padding:'0.6rem 0.75rem',
-                  background:'#161616', borderRadius:'6px' }}>
-                  <span style={{ color:'#ccc', fontSize:'0.8rem' }}>{label}</span>
+                  background:'#0f172a', borderRadius:'8px' }}>
+                  <span style={{ color:'#94a3b8', fontSize:'0.78rem', fontWeight:600 }}>{label}</span>
                   <Yes v={v} />
                 </div>
               ))}
             </div>
-            {[{label:'True Open Position', v:result.true_open_position},
-              {label:'Cycle', v:result.cycle}].map(({ label, v }) => (
-              <div key={label} style={{ padding:'0.6rem 0.75rem', background:'#161616',
-                borderRadius:'6px', marginBottom:'0.5rem' }}>
-                <p style={{ color:'#888', fontSize:'0.6rem', letterSpacing:'0.1em',
-                  textTransform:'uppercase', margin:'0 0 0.25rem' }}>{label}</p>
-                <p style={{ color:'#ccc', fontSize:'0.82rem', margin:0 }}>{v}</p>
+            {[{label:'True Open',v:result.true_open_position},{label:'Cycle',v:result.cycle}]
+              .map(({label,v}) => (
+              <div key={label} style={{ padding:'0.6rem 0.75rem', background:'#0f172a',
+                borderRadius:'8px', marginBottom:'0.5rem' }}>
+                <p style={{ color:'#475569', fontSize:'0.58rem', letterSpacing:'0.1em',
+                  textTransform:'uppercase', margin:'0 0 0.2rem', fontWeight:600 }}>{label}</p>
+                <p style={{ color:'#94a3b8', fontSize:'0.8rem', margin:0 }}>{v}</p>
               </div>
             ))}
           </div>
 
           {/* Trade Plan */}
-          <div style={{ background:'#101010', border:'1px solid #1f1f1f',
-            borderRadius:'8px', padding:'1.25rem' }}>
-            <p style={{ color:'#888', fontSize:'0.62rem', letterSpacing:'0.2em',
-              textTransform:'uppercase', margin:'0 0 1rem' }}>Trade Plan</p>
+          <div style={{
+            background:'linear-gradient(135deg, #0f172a, #1a1a2e)',
+            border:'1px solid #1e293b', borderRadius:'16px', padding:'1.25rem',
+          }}>
+            <p style={{ color:'#475569', fontSize:'0.6rem', letterSpacing:'0.2em',
+              textTransform:'uppercase', margin:'0 0 1rem', fontWeight:600 }}>Trade Plan</p>
             {[
-              {label:'Entry Zone',   v:result.entry_zone,   color:'#22c55e'},
+              {label:'Entry Zone',   v:result.entry_zone,   color:'#10b981'},
               {label:'Stop Loss',    v:result.stop_loss,    color:'#ef4444'},
-              {label:'Target / DOL', v:result.target,       color:'#3b82f6'},
-              {label:'Invalidation', v:result.invalidation, color:'#888'},
-            ].map(({ label, v, color }) => (
-              <div key={label} style={{ display:'flex', gap:'1rem', padding:'0.6rem 0',
-                borderBottom:'1px solid #1a1a1a', alignItems:'flex-start' }}>
-                <span style={{ color:'#555', fontSize:'0.68rem', letterSpacing:'0.1em',
-                  textTransform:'uppercase', flexShrink:0, width:90, paddingTop:2 }}>
-                  {label}
-                </span>
-                <span style={{ color, fontSize:'0.85rem' }}>{v}</span>
+              {label:'Target / DOL', v:result.target,       color:'#6366f1'},
+              {label:'Invalidation', v:result.invalidation, color:'#475569'},
+            ].map(({label,v,color}) => (
+              <div key={label} style={{ display:'flex', gap:'1rem', padding:'0.65rem 0',
+                borderBottom:'1px solid #0f172a', alignItems:'flex-start' }}>
+                <span style={{ color:'#334155', fontSize:'0.62rem', letterSpacing:'0.1em',
+                  textTransform:'uppercase', flexShrink:0, width:84,
+                  paddingTop:2, fontWeight:600 }}>{label}</span>
+                <span style={{ color, fontSize:'0.82rem', lineHeight:1.5 }}>{v}</span>
               </div>
             ))}
           </div>
 
           {/* Observations */}
-          <div style={{ background:'#101010', border:'1px solid #1f1f1f',
-            borderRadius:'8px', padding:'1.25rem' }}>
-            <p style={{ color:'#888', fontSize:'0.62rem', letterSpacing:'0.2em',
-              textTransform:'uppercase', margin:'0 0 0.75rem' }}>QT Observations</p>
-            {result.key_observations.map((obs, i) => (
+          <div style={{
+            background:'linear-gradient(135deg, #0f172a, #1a1a2e)',
+            border:'1px solid #1e293b', borderRadius:'16px', padding:'1.25rem',
+          }}>
+            <p style={{ color:'#475569', fontSize:'0.6rem', letterSpacing:'0.2em',
+              textTransform:'uppercase', margin:'0 0 0.75rem', fontWeight:600 }}>
+              QT Observations
+            </p>
+            {result.key_observations.map((obs,i) => (
               <div key={i} style={{ display:'flex', gap:'0.75rem',
                 marginBottom:'0.6rem', alignItems:'flex-start' }}>
-                <span style={{ color:'#22c55e', fontSize:'0.7rem',
+                <span style={{ color:'#6366f1', fontSize:'0.7rem',
                   flexShrink:0, marginTop:2 }}>◆</span>
-                <p style={{ color:'#ccc', fontSize:'0.82rem',
-                  margin:0, lineHeight:1.5 }}>{obs}</p>
+                <p style={{ color:'#94a3b8', fontSize:'0.8rem',
+                  margin:0, lineHeight:1.6 }}>{obs}</p>
               </div>
             ))}
           </div>
 
-          <div style={{ display:'flex', justifyContent:'flex-end' }}>
-            <a href={`/dashboard/journal?grade=${result.grade}&direction=${result.bias==='BULLISH'?'LONG':'SHORT'}`}
-              style={{ padding:'0.7rem 1.25rem', background:'#22c55e', borderRadius:'6px',
-                color:'#000', fontWeight:800, fontSize:'0.78rem', letterSpacing:'0.1em',
-                textTransform:'uppercase', textDecoration:'none' }}>
-              Log This Trade →
-            </a>
-          </div>
+          <a href={`/dashboard/journal?grade=${result.grade}&direction=${result.bias==='BULLISH'?'LONG':'SHORT'}`}
+            style={{
+              display:'block', textAlign:'center',
+              padding:'0.85rem',
+              background:'linear-gradient(135deg, #4f46e5, #7c3aed)',
+              borderRadius:'12px', color:'#fff', fontWeight:800,
+              fontSize:'0.82rem', letterSpacing:'0.1em',
+              textTransform:'uppercase', textDecoration:'none',
+              boxShadow:'0 4px 16px rgba(79,70,229,0.35)',
+            }}>
+            Log This Trade →
+          </a>
         </div>
       )}
     </div>
