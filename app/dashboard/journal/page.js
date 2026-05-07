@@ -5,16 +5,16 @@ import { createClient } from '@/lib/supabase'
 
 const MISTAKES = [
   'Entered before Q2 complete','No Daily SMT','No 90M SMT',
-  'Moved SL to BE early','FOMO entry','No TPD entry trigger',
+  'Moved SL to BE early','FOMO entry','No TPD trigger',
   'Wrong True Open side','Chased price','Over-leveraged','Early exit',
 ]
 
 const GRADE_COLOR = {
-  'A++':'#eab308','A+':'#22c55e','A':'#86efac','B':'#3b82f6','C':'#f59e0b','F':'#ef4444'
+  'A++':'#f59e0b','A+':'#10b981','A':'#34d399','B':'#6366f1','C':'#f97316','F':'#ef4444'
 }
 
 const emptyForm = {
-  symbol:'NQ', date: new Date().toISOString().slice(0,10),
+  symbol:'NQ', date:new Date().toISOString().slice(0,10),
   session:'NY', direction:'LONG',
   entry:'', sl:'', tp:'', exit:'', result:'WIN',
   pnl:'', rr:'', grade:'A', narrative:'', mistakes:[], mood:3,
@@ -36,11 +36,11 @@ export default function JournalPage() {
 
   const loadTrades = useCallback(async () => {
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user
     if (!user) return
     const { data } = await supabase
-      .from('trades')
-      .select('*')
+      .from('trades').select('*')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
     setTrades(data || [])
@@ -51,73 +51,57 @@ export default function JournalPage() {
   useEffect(() => { if (params.get('grade')) setModal(true) }, [params])
 
   const calcRR = (f = form) => {
-    const entry = parseFloat(f.entry), sl = parseFloat(f.sl), tp = parseFloat(f.tp)
-    if (!entry || !sl || !tp) return f
-    const risk   = Math.abs(entry - sl)
-    const reward = Math.abs(tp - entry)
-    const rr     = risk > 0 ? (reward / risk).toFixed(2) : ''
-    const exit   = parseFloat(f.exit)
-    let pnl = f.pnl
-    if (exit && !isNaN(exit)) {
-      pnl = f.direction === 'LONG'
-        ? ((exit - entry) * 20).toFixed(0)
-        : ((entry - exit) * 20).toFixed(0)
+    const entry=parseFloat(f.entry), sl=parseFloat(f.sl), tp=parseFloat(f.tp)
+    if (!entry||!sl||!tp) return f
+    const risk=Math.abs(entry-sl), reward=Math.abs(tp-entry)
+    const rr=risk>0?(reward/risk).toFixed(2):''
+    const exit=parseFloat(f.exit)
+    let pnl=f.pnl
+    if (exit&&!isNaN(exit)) {
+      pnl=f.direction==='LONG'?((exit-entry)*20).toFixed(0):((entry-exit)*20).toFixed(0)
     }
-    return { ...f, rr, pnl }
+    return {...f, rr, pnl}
   }
 
-  const set = (key, val) => setForm(p => ({ ...p, [key]: val }))
+  const set = (key, val) => setForm(p => ({...p, [key]:val}))
   const toggleMistake = (m) => setForm(p => ({
-    ...p, mistakes: p.mistakes.includes(m)
-      ? p.mistakes.filter(x => x !== m)
-      : [...p.mistakes, m],
+    ...p, mistakes:p.mistakes.includes(m)?p.mistakes.filter(x=>x!==m):[...p.mistakes,m],
   }))
 
   const save = async () => {
-    if (!form.entry || !form.sl || !form.tp) return
+    if (!form.entry||!form.sl||!form.tp) return
     setSaving(true)
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    const calculated = calcRR()
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user
+    const c = calcRR()
     await supabase.from('trades').insert({
-      user_id:   user.id,
-      symbol:    calculated.symbol,
-      date:      calculated.date,
-      session:   calculated.session,
-      direction: calculated.direction,
-      entry:     parseFloat(calculated.entry),
-      sl:        parseFloat(calculated.sl),
-      tp:        parseFloat(calculated.tp),
-      exit:      calculated.exit ? parseFloat(calculated.exit) : null,
-      result:    calculated.result,
-      pnl:       calculated.pnl ? parseFloat(calculated.pnl) : null,
-      rr:        calculated.rr  ? parseFloat(calculated.rr)  : null,
-      grade:     calculated.grade,
-      narrative: calculated.narrative,
-      mistakes:  calculated.mistakes,
-      mood:      calculated.mood,
+      user_id:user.id, symbol:c.symbol, date:c.date, session:c.session,
+      direction:c.direction, entry:parseFloat(c.entry), sl:parseFloat(c.sl),
+      tp:parseFloat(c.tp), exit:c.exit?parseFloat(c.exit):null,
+      result:c.result, pnl:c.pnl?parseFloat(c.pnl):null,
+      rr:c.rr?parseFloat(c.rr):null, grade:c.grade,
+      narrative:c.narrative, mistakes:c.mistakes, mood:c.mood,
     })
-    setModal(false)
-    setForm(emptyForm)
-    await loadTrades()
-    setSaving(false)
+    setModal(false); setForm(emptyForm)
+    await loadTrades(); setSaving(false)
+  }
+
+  const inputStyle = {
+    width:'100%', background:'#0f172a', border:'1px solid #1e293b',
+    borderRadius:'8px', padding:'0.65rem 0.75rem', color:'#f8fafc',
+    fontSize:'0.88rem', outline:'none', boxSizing:'border-box',
+    transition:'border-color 0.15s',
   }
 
   const F = ({ label, children }) => (
     <div>
-      <label style={{ display:'block', color:'#888', fontSize:'0.6rem',
-        letterSpacing:'0.15em', textTransform:'uppercase', marginBottom:'0.3rem' }}>
-        {label}
-      </label>
+      <label style={{ display:'block', color:'#475569', fontSize:'0.6rem',
+        letterSpacing:'0.15em', textTransform:'uppercase', marginBottom:'0.35rem',
+        fontWeight:600 }}>{label}</label>
       {children}
     </div>
   )
-
-  const inputStyle = {
-    width:'100%', background:'#1a1a1a', border:'1px solid #2a2a2a',
-    borderRadius:'6px', padding:'0.6rem 0.75rem', color:'#fff',
-    fontSize:'0.88rem', outline:'none', boxSizing:'border-box',
-  }
 
   const Input = ({ name, type='text', placeholder='' }) => (
     <input type={type} value={form[name]} placeholder={placeholder}
@@ -132,93 +116,127 @@ export default function JournalPage() {
     </select>
   )
 
-  const visible = filter === 'ALL' ? trades : trades.filter(t => t.result === filter)
+  const visible = filter==='ALL' ? trades : trades.filter(t => t.result===filter)
 
   return (
     <div>
+      <style>{`
+        .trade-row:hover { background: rgba(30,41,59,0.5) !important; }
+        input:focus, select:focus, textarea:focus { border-color: #4f46e5 !important; outline: none; }
+      `}</style>
+
+      {/* Header */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start',
-        marginBottom:'1.5rem', flexWrap:'wrap', gap:'1rem' }}>
+        marginBottom:'1.5rem', paddingBottom:'1rem', borderBottom:'1px solid #1e293b',
+        flexWrap:'wrap', gap:'1rem' }}>
         <div>
-          <p style={{ color:'#888', fontSize:'0.7rem', letterSpacing:'0.2em',
-            textTransform:'uppercase', margin:'0 0 0.3rem' }}>Cloud Journal</p>
-          <h1 style={{ color:'#fff', fontSize:'1.8rem', fontWeight:900, margin:0 }}>Trades</h1>
+          <p style={{ color:'#6366f1', fontSize:'0.65rem', letterSpacing:'0.25em',
+            textTransform:'uppercase', margin:'0 0 0.25rem', fontWeight:700 }}>Cloud Sync</p>
+          <h1 style={{ color:'#f8fafc', fontSize:'1.75rem', fontWeight:900,
+            margin:0, letterSpacing:'-0.03em' }}>Trade Journal</h1>
         </div>
         <button onClick={() => setModal(true)} style={{
-          padding:'0.7rem 1.25rem', background:'#22c55e', border:'none',
-          borderRadius:'6px', color:'#000', fontWeight:800, fontSize:'0.8rem',
-          letterSpacing:'0.15em', textTransform:'uppercase', cursor:'pointer',
+          padding:'0.75rem 1.5rem',
+          background:'linear-gradient(135deg, #4f46e5, #7c3aed)',
+          border:'none', borderRadius:'10px', color:'#fff',
+          fontWeight:800, fontSize:'0.82rem', letterSpacing:'0.1em',
+          textTransform:'uppercase', cursor:'pointer',
+          boxShadow:'0 4px 16px rgba(79,70,229,0.35)',
         }}>+ Log Trade</button>
       </div>
 
-      {/* Filter */}
-      <div style={{ display:'flex', gap:'0.5rem', marginBottom:'1.5rem' }}>
-        {['ALL','WIN','LOSS'].map(f => (
+      {/* Filters */}
+      <div style={{ display:'flex', gap:'0.4rem', marginBottom:'1.25rem' }}>
+        {['ALL','WIN','LOSS','BE'].map(f => (
           <button key={f} onClick={() => setFilter(f)} style={{
-            padding:'0.4rem 1rem', borderRadius:'5px', fontSize:'0.75rem', fontWeight:700,
-            cursor:'pointer',
-            background: filter===f ? '#fff' : 'transparent',
-            color: filter===f ? '#000' : '#888',
-            border: filter===f ? '1px solid #fff' : '1px solid #2a2a2a',
+            padding:'0.4rem 0.9rem', borderRadius:'8px', fontSize:'0.72rem',
+            fontWeight:700, cursor:'pointer', transition:'all 0.15s',
+            background: filter===f
+              ? (f==='WIN'?'linear-gradient(135deg,#059669,#10b981)':f==='LOSS'?'linear-gradient(135deg,#dc2626,#ef4444)':f==='BE'?'linear-gradient(135deg,#1e293b,#1e293b)':'linear-gradient(135deg,#4f46e5,#7c3aed)')
+              : '#0f172a',
+            color: filter===f ? '#fff' : '#475569',
+            border: filter===f ? '1px solid transparent' : '1px solid #1e293b',
           }}>{f}</button>
         ))}
+        <span style={{ marginLeft:'auto', color:'#334155', fontSize:'0.72rem',
+          display:'flex', alignItems:'center' }}>{visible.length} trades</span>
       </div>
 
       {/* Table */}
-      <div style={{ background:'#101010', border:'1px solid #1f1f1f',
-        borderRadius:'8px', overflow:'hidden' }}>
+      <div style={{
+        background:'linear-gradient(135deg, #0f172a, #1a1a2e)',
+        border:'1px solid #1e293b', borderRadius:'16px', overflow:'hidden',
+      }}>
         {loading ? (
-          <div style={{ padding:'3rem', textAlign:'center', color:'#555' }}>Loading…</div>
-        ) : visible.length === 0 ? (
-          <div style={{ padding:'3rem', textAlign:'center', color:'#555' }}>
-            No trades yet. Hit + Log Trade to start.
+          <div style={{ padding:'3rem', textAlign:'center' }}>
+            <div style={{ color:'#334155', fontSize:'0.85rem' }}>Loading trades…</div>
+          </div>
+        ) : visible.length===0 ? (
+          <div style={{ padding:'3.5rem', textAlign:'center' }}>
+            <div style={{ fontSize:'3rem', marginBottom:'1rem' }}>📝</div>
+            <p style={{ color:'#475569', fontSize:'0.9rem', margin:'0 0 0.5rem', fontWeight:600 }}>
+              No trades {filter!=='ALL'?`with result: ${filter}`:'yet'}
+            </p>
+            <p style={{ color:'#334155', fontSize:'0.78rem', margin:0 }}>
+              Tap + Log Trade to add your first trade
+            </p>
           </div>
         ) : (
           <div style={{ overflowX:'auto' }}>
             <table style={{ width:'100%', borderCollapse:'collapse' }}>
               <thead>
-                <tr>
-                  {['Date','Sym','Dir','Entry','SL','TP','P&L','RR','Grade','Result'].map(h => (
-                    <th key={h} style={{ padding:'0.65rem 0.9rem', textAlign:'left',
-                      color:'#555', fontSize:'0.6rem', letterSpacing:'0.15em',
-                      textTransform:'uppercase', borderBottom:'1px solid #1a1a1a',
-                      whiteSpace:'nowrap' }}>{h}</th>
+                <tr style={{ background:'#0a0a14' }}>
+                  {['Date','Symbol','Dir','Entry','SL','TP','P&L','RR','Grade','Result'].map(h => (
+                    <th key={h} style={{ padding:'0.75rem 1rem', textAlign:'left',
+                      color:'#334155', fontSize:'0.6rem', letterSpacing:'0.15em',
+                      textTransform:'uppercase', borderBottom:'1px solid #1e293b',
+                      whiteSpace:'nowrap', fontWeight:600 }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {visible.map(t => (
-                  <tr key={t.id} style={{ borderBottom:'1px solid #141414' }}>
-                    <td style={{ padding:'0.7rem 0.9rem', color:'#888',
-                      fontFamily:'monospace', fontSize:'0.78rem', whiteSpace:'nowrap' }}>{t.date}</td>
-                    <td style={{ padding:'0.7rem 0.9rem', color:'#fff',
-                      fontWeight:700, fontSize:'0.82rem' }}>{t.symbol}</td>
-                    <td style={{ padding:'0.7rem 0.9rem', fontSize:'0.78rem', fontWeight:700,
-                      color:t.direction==='LONG'?'#22c55e':'#ef4444' }}>{t.direction}</td>
+                {visible.map((t,i) => (
+                  <tr key={t.id} className="trade-row" style={{
+                    borderBottom: i<visible.length-1?'1px solid #0f172a':'none',
+                    transition:'background 0.1s',
+                  }}>
+                    <td style={{ padding:'0.8rem 1rem', color:'#475569',
+                      fontFamily:'monospace', fontSize:'0.75rem', whiteSpace:'nowrap' }}>{t.date}</td>
+                    <td style={{ padding:'0.8rem 1rem', color:'#f8fafc',
+                      fontWeight:800, fontSize:'0.85rem' }}>{t.symbol}</td>
+                    <td style={{ padding:'0.8rem 1rem' }}>
+                      <span style={{
+                        fontSize:'0.65rem', fontWeight:700, padding:'2px 7px',
+                        borderRadius:'5px',
+                        background:t.direction==='LONG'?'rgba(16,185,129,0.12)':'rgba(239,68,68,0.12)',
+                        color:t.direction==='LONG'?'#10b981':'#ef4444',
+                      }}>{t.direction==='LONG'?'▲ L':'▼ S'}</span>
+                    </td>
                     {['entry','sl','tp'].map(k => (
-                      <td key={k} style={{ padding:'0.7rem 0.9rem', color:'#ccc',
+                      <td key={k} style={{ padding:'0.8rem 1rem', color:'#64748b',
                         fontFamily:'monospace', fontSize:'0.78rem' }}>{t[k]}</td>
                     ))}
-                    <td style={{ padding:'0.7rem 0.9rem', fontFamily:'monospace',
-                      fontSize:'0.82rem', fontWeight:700,
-                      color:(t.pnl||0)>0?'#22c55e':(t.pnl||0)<0?'#ef4444':'#888' }}>
+                    <td style={{ padding:'0.8rem 1rem', fontFamily:'monospace',
+                      fontSize:'0.85rem', fontWeight:800,
+                      color:(t.pnl||0)>0?'#10b981':(t.pnl||0)<0?'#ef4444':'#94a3b8' }}>
                       {t.pnl!=null?`${t.pnl>0?'+':''}${t.pnl}`:'—'}
                     </td>
-                    <td style={{ padding:'0.7rem 0.9rem', color:'#888',
+                    <td style={{ padding:'0.8rem 1rem', color:'#64748b',
                       fontFamily:'monospace', fontSize:'0.78rem' }}>
-                      {t.rr ? `${t.rr}R` : '—'}
+                      {t.rr?`${t.rr}R`:'—'}
                     </td>
-                    <td style={{ padding:'0.7rem 0.9rem' }}>
-                      <span style={{ fontSize:'0.68rem', fontWeight:800, padding:'2px 7px',
-                        borderRadius:'4px', color:GRADE_COLOR[t.grade]||'#888',
-                        border:`1px solid ${GRADE_COLOR[t.grade]||'#333'}` }}>
+                    <td style={{ padding:'0.8rem 1rem' }}>
+                      <span style={{ fontSize:'0.65rem', fontWeight:800, padding:'2px 8px',
+                        borderRadius:'5px', color:GRADE_COLOR[t.grade]||'#94a3b8',
+                        background:`${GRADE_COLOR[t.grade]||'#94a3b8'}12` }}>
                         {t.grade||'—'}
                       </span>
                     </td>
-                    <td style={{ padding:'0.7rem 0.9rem' }}>
-                      <span style={{ fontSize:'0.68rem', fontWeight:800, padding:'2px 8px',
-                        borderRadius:'4px',
-                        background:t.result==='WIN'?'#052e16':t.result==='LOSS'?'#1c0a0a':'#1a1a1a',
-                        color:t.result==='WIN'?'#22c55e':t.result==='LOSS'?'#ef4444':'#888' }}>
+                    <td style={{ padding:'0.8rem 1rem' }}>
+                      <span style={{ fontSize:'0.65rem', fontWeight:800, padding:'2px 8px',
+                        borderRadius:'5px',
+                        background:t.result==='WIN'?'rgba(16,185,129,0.12)':t.result==='LOSS'?'rgba(239,68,68,0.12)':'rgba(100,116,139,0.12)',
+                        color:t.result==='WIN'?'#10b981':t.result==='LOSS'?'#ef4444':'#94a3b8' }}>
                         {t.result}
                       </span>
                     </td>
@@ -232,81 +250,93 @@ export default function JournalPage() {
 
       {/* Modal */}
       {modal && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.85)',
-          display:'flex', alignItems:'center', justifyContent:'center',
-          zIndex:100, padding:'1rem' }}>
-          <div style={{ background:'#111', border:'1px solid #222', borderRadius:'10px',
-            width:'100%', maxWidth:600, maxHeight:'90vh', overflowY:'auto', padding:'1.75rem' }}>
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)',
+          backdropFilter:'blur(4px)', display:'flex', alignItems:'center',
+          justifyContent:'center', zIndex:100, padding:'1rem' }}>
+          <div style={{
+            background:'linear-gradient(135deg, #0d0d16, #0f172a)',
+            border:'1px solid #1e293b', borderRadius:'20px',
+            width:'100%', maxWidth:580, maxHeight:'90vh', overflowY:'auto',
+            padding:'1.75rem', boxShadow:'0 25px 60px rgba(0,0,0,0.6)',
+          }}>
             <div style={{ display:'flex', justifyContent:'space-between',
               alignItems:'center', marginBottom:'1.5rem' }}>
-              <h2 style={{ color:'#fff', margin:0, fontSize:'1.1rem', fontWeight:800,
-                letterSpacing:'0.1em', textTransform:'uppercase' }}>Log Trade</h2>
-              <button onClick={() => setModal(false)} style={{ background:'transparent',
-                border:'none', color:'#888', fontSize:'1.3rem', cursor:'pointer' }}>✕</button>
+              <div>
+                <h2 style={{ color:'#f8fafc', margin:'0 0 0.2rem', fontSize:'1.1rem',
+                  fontWeight:900 }}>Log Trade</h2>
+                <p style={{ color:'#334155', margin:0, fontSize:'0.72rem' }}>
+                  Add to your QT journal
+                </p>
+              </div>
+              <button onClick={() => setModal(false)} style={{
+                background:'#1e293b', border:'none', color:'#94a3b8',
+                fontSize:'1rem', cursor:'pointer', width:32, height:32,
+                borderRadius:'8px', display:'flex', alignItems:'center',
+                justifyContent:'center',
+              }}>✕</button>
             </div>
 
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.9rem' }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.85rem' }}>
               <F label="Date"><Input name="date" type="date" /></F>
               <F label="Symbol"><Select name="symbol" opts={['NQ','ES','MNQ','MES']} /></F>
               <F label="Session"><Select name="session" opts={['London','NY','Overnight','Asian']} /></F>
               <F label="Direction"><Select name="direction" opts={['LONG','SHORT']} /></F>
-              <F label="Entry"><Input name="entry" type="number" placeholder="e.g. 21500" /></F>
-              <F label="Stop Loss"><Input name="sl" type="number" placeholder="e.g. 21450" /></F>
-              <F label="Take Profit"><Input name="tp" type="number" placeholder="e.g. 21600" /></F>
+              <F label="Entry Price"><Input name="entry" type="number" placeholder="21500" /></F>
+              <F label="Stop Loss"><Input name="sl" type="number" placeholder="21450" /></F>
+              <F label="Take Profit"><Input name="tp" type="number" placeholder="21600" /></F>
               <F label="Exit Price"><Input name="exit" type="number" placeholder="actual exit" /></F>
               <F label="Result"><Select name="result" opts={['WIN','LOSS','BE']} /></F>
               <F label="Grade"><Select name="grade" opts={['A++','A+','A','B','C','F']} /></F>
-              <F label="P&L (auto-calc)"><Input name="pnl" type="number" placeholder="auto" /></F>
-              <F label="RR (auto-calc)"><Input name="rr" type="number" placeholder="auto" /></F>
+              <F label="P&L (pts)"><Input name="pnl" type="number" placeholder="auto-calc" /></F>
+              <F label="R:R"><Input name="rr" type="number" placeholder="auto-calc" /></F>
             </div>
 
-            <div style={{ marginTop:'0.9rem' }}>
+            <div style={{ marginTop:'0.85rem' }}>
               <F label="Trade Narrative">
                 <textarea value={form.narrative}
                   onChange={e => set('narrative', e.target.value)}
-                  rows={3} placeholder="What did you see? Why did you take this trade?"
-                  style={{ ...inputStyle, resize:'vertical', fontFamily:'inherit' }} />
+                  rows={3} placeholder="What did you see? SSMT? TPD? True Open alignment?"
+                  style={{ ...inputStyle, resize:'vertical', fontFamily:'inherit', lineHeight:1.6 }} />
               </F>
             </div>
 
-            <div style={{ marginTop:'0.9rem' }}>
-              <label style={{ display:'block', color:'#888', fontSize:'0.6rem',
-                letterSpacing:'0.15em', textTransform:'uppercase', marginBottom:'0.5rem' }}>
-                Mistakes Tagged
-              </label>
-              <div style={{ display:'flex', flexWrap:'wrap', gap:'0.4rem' }}>
+            <div style={{ marginTop:'0.85rem' }}>
+              <label style={{ display:'block', color:'#475569', fontSize:'0.6rem',
+                letterSpacing:'0.15em', textTransform:'uppercase',
+                marginBottom:'0.5rem', fontWeight:600 }}>Mistakes Tagged</label>
+              <div style={{ display:'flex', flexWrap:'wrap', gap:'0.35rem' }}>
                 {MISTAKES.map(m => {
                   const sel = form.mistakes.includes(m)
                   return (
                     <button key={m} onClick={() => toggleMistake(m)} style={{
-                      padding:'0.3rem 0.7rem', borderRadius:'4px', fontSize:'0.72rem',
-                      cursor:'pointer',
-                      background: sel ? '#1c0a0a' : 'transparent',
-                      color: sel ? '#ef4444' : '#555',
-                      border: sel ? '1px solid #ef444450' : '1px solid #2a2a2a',
+                      padding:'0.3rem 0.65rem', borderRadius:'6px', fontSize:'0.7rem',
+                      cursor:'pointer', transition:'all 0.1s',
+                      background:sel?'rgba(239,68,68,0.1)':'#0f172a',
+                      color:sel?'#ef4444':'#475569',
+                      border:sel?'1px solid rgba(239,68,68,0.3)':'1px solid #1e293b',
                     }}>{m}</button>
                   )
                 })}
               </div>
             </div>
 
-            <div style={{ marginTop:'0.9rem' }}>
-              <label style={{ display:'block', color:'#888', fontSize:'0.6rem',
-                letterSpacing:'0.15em', textTransform:'uppercase', marginBottom:'0.5rem' }}>
-                Mood
-              </label>
-              <div style={{ display:'flex', gap:'0.5rem' }}>
+            <div style={{ marginTop:'0.85rem' }}>
+              <label style={{ display:'block', color:'#475569', fontSize:'0.6rem',
+                letterSpacing:'0.15em', textTransform:'uppercase',
+                marginBottom:'0.5rem', fontWeight:600 }}>Emotional State</label>
+              <div style={{ display:'flex', gap:'0.4rem' }}>
                 {[{v:1,e:'😤',l:'Revenge'},{v:2,e:'😟',l:'Anxious'},
                   {v:3,e:'😐',l:'Neutral'},{v:4,e:'😊',l:'Focused'},{v:5,e:'🎯',l:'Zone'}]
-                  .map(({ v, e, l }) => (
-                    <button key={v} onClick={() => set('mood', v)} style={{
-                      flex:1, padding:'0.5rem 0.25rem', borderRadius:'6px',
-                      cursor:'pointer', fontSize:'1.1rem', textAlign:'center',
-                      background: form.mood===v ? '#1a2a1a' : '#1a1a1a',
-                      border: form.mood===v ? '1px solid #22c55e' : '1px solid #2a2a2a',
+                  .map(({v,e,l}) => (
+                    <button key={v} onClick={() => set('mood',v)} style={{
+                      flex:1, padding:'0.5rem 0.1rem', borderRadius:'8px',
+                      cursor:'pointer', textAlign:'center', transition:'all 0.15s',
+                      background:form.mood===v?'rgba(99,102,241,0.15)':'#0f172a',
+                      border:form.mood===v?'1px solid rgba(99,102,241,0.4)':'1px solid #1e293b',
                     }}>
-                      <div>{e}</div>
-                      <div style={{ fontSize:'0.55rem', color:'#888', marginTop:'2px' }}>{l}</div>
+                      <div style={{ fontSize:'1.2rem' }}>{e}</div>
+                      <div style={{ fontSize:'0.52rem', color:form.mood===v?'#818cf8':'#334155',
+                        marginTop:'2px', fontWeight:600 }}>{l}</div>
                     </button>
                   ))}
               </div>
@@ -314,14 +344,18 @@ export default function JournalPage() {
 
             <div style={{ display:'flex', gap:'0.75rem', marginTop:'1.5rem' }}>
               <button onClick={save} disabled={saving} style={{
-                flex:1, padding:'0.8rem', background:'#22c55e', border:'none',
-                borderRadius:'6px', color:'#000', fontWeight:800, fontSize:'0.82rem',
-                letterSpacing:'0.15em', textTransform:'uppercase', cursor:'pointer',
-              }}>{saving ? 'SAVING…' : 'SAVE TRADE →'}</button>
+                flex:1, padding:'0.85rem',
+                background:'linear-gradient(135deg, #4f46e5, #7c3aed)',
+                border:'none', borderRadius:'10px', color:'#fff',
+                fontWeight:800, fontSize:'0.82rem', letterSpacing:'0.1em',
+                textTransform:'uppercase', cursor:'pointer',
+                boxShadow:'0 4px 16px rgba(79,70,229,0.35)',
+                opacity:saving?0.7:1,
+              }}>{saving?'SAVING…':'SAVE TRADE →'}</button>
               <button onClick={() => setModal(false)} style={{
-                padding:'0.8rem 1.25rem', background:'transparent',
-                border:'1px solid #2a2a2a', borderRadius:'6px',
-                color:'#888', fontSize:'0.8rem', cursor:'pointer',
+                padding:'0.85rem 1.25rem', background:'transparent',
+                border:'1px solid #1e293b', borderRadius:'10px',
+                color:'#475569', fontSize:'0.8rem', cursor:'pointer',
               }}>Cancel</button>
             </div>
           </div>
