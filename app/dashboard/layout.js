@@ -5,198 +5,180 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 
 const NAV = [
-  { href:'/dashboard',           label:'Overview',   icon:'⊡', desc:'Stats & trades' },
-  { href:'/dashboard/checklist', label:'Checklist',  icon:'✓', desc:'QT pre-trade' },
-  { href:'/dashboard/journal',   label:'Journal',    icon:'≡', desc:'Trade log' },
-  { href:'/dashboard/stats',     label:'Analytics',  icon:'◈', desc:'Performance' },
-  { href:'/dashboard/analyzer',  label:'AI Analyze', icon:'◎', desc:'Chart AI' },
+  { href:'/dashboard',           label:'Overview',  icon:'⊡' },
+  { href:'/dashboard/journal',   label:'Journal',   icon:'✎' },
+  { href:'/dashboard/log',       label:'Log',       icon:'≡' },
+  { href:'/dashboard/stats',     label:'Stats',     icon:'◈' },
+  { href:'/dashboard/review',    label:'Review',    icon:'◉' },
+  { href:'/dashboard/analyzer',  label:'AI',        icon:'◎' },
+  { href:'/dashboard/accounts',  label:'Accounts',  icon:'⬡' },
 ]
 
 export default function DashboardLayout({ children }) {
-  const [user,    setUser]    = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [user,     setUser]     = useState(null)
+  const [loading,  setLoading]  = useState(true)
+  const [account,  setAccount]  = useState(null)
+  const [accounts, setAccounts] = useState([])
   const router   = useRouter()
   const pathname = usePathname()
 
   useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) router.replace('/login')
-      else { setUser(session.user); setLoading(false) }
-    })
+    const init = async () => {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { router.replace('/login'); return }
+      setUser(session.user)
+
+      let { data: accts } = await supabase
+        .from('accounts').select('*')
+        .eq('user_id', session.user.id).order('created_at')
+
+      if (!accts || accts.length === 0) {
+        const { data: created } = await supabase.from('accounts').insert([
+          { user_id: session.user.id, name: 'Think Capital', type: 'funded', balance: 100000 },
+          { user_id: session.user.id, name: 'MCF / Profprim', type: 'funded', balance: 50000 },
+          { user_id: session.user.id, name: 'Personal', type: 'personal', balance: 10000 },
+        ]).select()
+        accts = created || []
+      }
+
+      setAccounts(accts)
+      const saved  = typeof window !== 'undefined' ? localStorage.getItem('tp-active-account') : null
+      const active = accts.find(a => a.id === saved) || accts[0]
+      setAccount(active)
+      setLoading(false)
+    }
+    init()
   }, [router])
 
-  const handleLogout = async () => {
-    const supabase = createClient()
-    await supabase.auth.signOut()
+  const switchAccount = (acct) => {
+    setAccount(acct)
+    localStorage.setItem('tp-active-account', acct.id)
+    window.dispatchEvent(new CustomEvent('account-changed', { detail: acct }))
+  }
+
+  const logout = async () => {
+    await createClient().auth.signOut()
     router.replace('/login')
   }
 
   if (loading) return (
-    <div style={{ minHeight:'100vh', background:'#0a0a0f',
-      display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:'1rem' }}>
-      <div style={{
-        width:40, height:40, borderRadius:'12px',
-        background:'linear-gradient(135deg, #4f46e5, #7c3aed)',
-        animation:'spin 2s linear infinite',
-        display:'flex', alignItems:'center', justifyContent:'center',
-        fontSize:'1.2rem',
-      }}>⚡</div>
-      <p style={{ color:'#334155', fontSize:'0.75rem', letterSpacing:'0.2em',
-        textTransform:'uppercase' }}>Loading TradePulse</p>
-      <style>{`@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}`}</style>
+    <div style={{ minHeight:'100vh', background:'#080b0f', display:'flex',
+      alignItems:'center', justifyContent:'center' }}>
+      <div style={{ textAlign:'center' }}>
+        <div style={{ color:'#00e5ff', fontFamily:'monospace', fontSize:'1.5rem',
+          letterSpacing:'4px', marginBottom:'0.5rem' }}>TRADEPULSE</div>
+        <div style={{ color:'#1e3a4a', fontSize:'0.62rem', letterSpacing:'3px' }}>LOADING…</div>
+      </div>
     </div>
   )
 
   return (
-    <div style={{ minHeight:'100vh', background:'#0a0a0f', display:'flex' }}>
+    <div style={{ minHeight:'100vh', background:'#080b0f', display:'flex',
+      fontFamily:"'IBM Plex Mono', monospace", color:'#c9d6df' }}>
       <style>{`
-        * { box-sizing: border-box; }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: #0a0a0f; }
-        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 2px; }
-        .nav-link { transition: all 0.15s ease; }
-        .nav-link:hover { background: #1e293b !important; }
-        @media(max-width:768px) {
-          .sidebar { display: none !important; }
-          .main-wrap { margin-left: 0 !important; padding-bottom: 5rem !important; }
-          .mobile-nav { display: flex !important; }
+        *{box-sizing:border-box}
+        ::-webkit-scrollbar{width:3px}
+        ::-webkit-scrollbar-track{background:#080b0f}
+        ::-webkit-scrollbar-thumb{background:#1e2a35;border-radius:2px}
+        .nav-lnk:hover{background:rgba(0,229,255,0.05)!important;color:#c9d6df!important}
+        input,select,textarea{color-scheme:dark}
+        @media(max-width:768px){
+          .sidebar{display:none!important}
+          .main-wrap{margin-left:0!important;padding-bottom:5.5rem!important}
+          .mob-nav{display:flex!important}
         }
       `}</style>
 
       {/* Sidebar */}
       <aside className="sidebar" style={{
-        width:240, minHeight:'100vh', background:'#0d0d16',
-        borderRight:'1px solid #1e1e2e', display:'flex', flexDirection:'column',
+        width:200, minHeight:'100vh', background:'#0d1117',
+        borderRight:'1px solid #1e2a35', display:'flex', flexDirection:'column',
         position:'fixed', top:0, left:0, bottom:0, zIndex:50,
       }}>
-        {/* Logo */}
-        <div style={{ padding:'1.5rem 1.25rem 1.25rem', borderBottom:'1px solid #1a1a2a' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:'0.6rem' }}>
-            <div style={{
-              width:32, height:32, borderRadius:'10px',
-              background:'linear-gradient(135deg, #4f46e5, #7c3aed)',
-              display:'flex', alignItems:'center', justifyContent:'center',
-              fontSize:'1rem', flexShrink:0,
-            }}>⚡</div>
-            <div>
-              <p style={{ color:'#f8fafc', fontWeight:900, fontSize:'0.9rem',
-                margin:0, letterSpacing:'0.05em' }}>TradePulse</p>
-              <p style={{ color:'#334155', fontSize:'0.58rem', margin:0,
-                letterSpacing:'0.15em', textTransform:'uppercase' }}>QT Journal</p>
-            </div>
+        <div style={{ padding:'1.25rem 1rem', borderBottom:'1px solid #1e2a35' }}>
+          <div style={{ color:'#00e5ff', fontWeight:900, fontSize:'1rem', letterSpacing:'3px' }}>
+            TRADE<span style={{ color:'#39ff14' }}>PULSE</span>
+          </div>
+          <div style={{ color:'#4a6274', fontSize:'0.52rem', letterSpacing:'2px', marginTop:'2px' }}>
+            QT JOURNAL v12
           </div>
         </div>
 
-        {/* User */}
-        <div style={{ padding:'1rem 1.25rem', borderBottom:'1px solid #1a1a2a' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:'0.6rem' }}>
-            <div style={{
-              width:32, height:32, borderRadius:'50%', flexShrink:0,
-              background:'linear-gradient(135deg, #4f46e5, #7c3aed)',
-              display:'flex', alignItems:'center', justifyContent:'center',
-              color:'#fff', fontSize:'0.75rem', fontWeight:800,
-            }}>
-              {user?.email?.[0]?.toUpperCase() || 'T'}
-            </div>
-            <div style={{ overflow:'hidden' }}>
-              <p style={{ color:'#94a3b8', fontSize:'0.6rem', letterSpacing:'0.1em',
-                textTransform:'uppercase', margin:'0 0 0.1rem' }}>Trader</p>
-              <p style={{ color:'#f8fafc', fontSize:'0.75rem', margin:0,
-                overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                {user?.email}
-              </p>
-            </div>
+        {/* Account switcher */}
+        <div style={{ padding:'0.75rem 1rem', borderBottom:'1px solid #1e2a35' }}>
+          <div style={{ color:'#4a6274', fontSize:'0.52rem', letterSpacing:'2px',
+            textTransform:'uppercase', marginBottom:'0.4rem' }}>Account</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:'3px' }}>
+            {accounts.map(a => (
+              <button key={a.id} onClick={() => switchAccount(a)} style={{
+                padding:'4px 8px', borderRadius:'3px', fontSize:'0.6rem', cursor:'pointer',
+                textAlign:'left', fontFamily:'inherit', letterSpacing:'1px',
+                background: account?.id===a.id ? 'rgba(0,229,255,0.1)' : 'transparent',
+                border: account?.id===a.id ? '1px solid rgba(0,229,255,0.25)' : '1px solid transparent',
+                color: account?.id===a.id ? '#00e5ff' : '#4a6274', transition:'all 0.15s',
+              }}>{a.name}</button>
+            ))}
           </div>
         </div>
 
         {/* Nav */}
-        <nav style={{ flex:1, padding:'0.75rem 0.75rem' }}>
-          <p style={{ color:'#1e293b', fontSize:'0.58rem', letterSpacing:'0.2em',
-            textTransform:'uppercase', padding:'0 0.5rem', margin:'0 0 0.5rem',
-            fontWeight:600 }}>Navigation</p>
-          {NAV.map(({ href, label, icon, desc }) => {
-            const active = pathname === href
+        <nav style={{ flex:1, padding:'0.5rem' }}>
+          {NAV.map(({ href, label, icon }) => {
+            const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
             return (
-              <Link key={href} href={href} className="nav-link" style={{
-                display:'flex', alignItems:'center', gap:'0.75rem',
-                padding:'0.7rem 0.75rem', borderRadius:'10px', marginBottom:'2px',
-                background: active ? 'linear-gradient(135deg, rgba(79,70,229,0.2), rgba(124,58,237,0.1))' : 'transparent',
-                border: active ? '1px solid rgba(99,102,241,0.3)' : '1px solid transparent',
-                textDecoration:'none', transition:'all 0.15s',
+              <Link key={href} href={href} className="nav-lnk" style={{
+                display:'flex', alignItems:'center', gap:'0.6rem',
+                padding:'0.5rem 0.6rem', borderRadius:'3px', marginBottom:'2px',
+                background: active ? 'rgba(0,229,255,0.08)' : 'transparent',
+                border: active ? '1px solid rgba(0,229,255,0.15)' : '1px solid transparent',
+                textDecoration:'none', color: active ? '#00e5ff' : '#4a6274',
+                fontSize:'0.68rem', letterSpacing:'2px', transition:'all 0.15s',
               }}>
-                <span style={{
-                  width:28, height:28, borderRadius:'8px', flexShrink:0,
-                  background: active ? 'linear-gradient(135deg, #4f46e5, #7c3aed)' : '#1a1a2a',
-                  display:'flex', alignItems:'center', justifyContent:'center',
-                  fontSize:'0.85rem', color: active ? '#fff' : '#475569',
-                }}>{icon}</span>
-                <div>
-                  <p style={{ color: active ? '#f8fafc' : '#94a3b8', fontWeight: active ? 700 : 500,
-                    fontSize:'0.82rem', margin:0 }}>{label}</p>
-                  <p style={{ color:'#334155', fontSize:'0.6rem', margin:0 }}>{desc}</p>
-                </div>
-                {active && <div style={{ marginLeft:'auto', width:6, height:6, borderRadius:'50%',
-                  background:'#6366f1' }} />}
+                <span style={{ fontSize:'0.85rem', width:16 }}>{icon}</span>
+                {label.toUpperCase()}
               </Link>
             )
           })}
         </nav>
 
-        {/* Bottom */}
-        <div style={{ padding:'1rem 1.25rem', borderTop:'1px solid #1a1a2a' }}>
-          <div style={{
-            background:'linear-gradient(135deg, rgba(79,70,229,0.1), rgba(124,58,237,0.05))',
-            border:'1px solid rgba(99,102,241,0.2)', borderRadius:'10px',
-            padding:'0.75rem', marginBottom:'0.75rem',
-          }}>
-            <p style={{ color:'#6366f1', fontSize:'0.62rem', letterSpacing:'0.1em',
-              textTransform:'uppercase', margin:'0 0 0.2rem', fontWeight:700 }}>QT Framework</p>
-            <p style={{ color:'#475569', fontSize:'0.68rem', margin:0 }}>
-              Daye · Jacob · 2024
-            </p>
+        <div style={{ padding:'0.75rem 1rem', borderTop:'1px solid #1e2a35' }}>
+          <div style={{ color:'#2a4a5a', fontSize:'0.55rem', overflow:'hidden',
+            textOverflow:'ellipsis', whiteSpace:'nowrap', marginBottom:'0.5rem' }}>
+            {user?.email}
           </div>
-          <button onClick={handleLogout} style={{
-            width:'100%', background:'transparent', border:'1px solid #1e293b',
-            borderRadius:'8px', color:'#475569', padding:'0.6rem',
-            fontSize:'0.72rem', letterSpacing:'0.1em', textTransform:'uppercase',
-            cursor:'pointer', transition:'all 0.15s',
-          }}>Sign Out</button>
+          <button onClick={logout} style={{
+            width:'100%', background:'transparent', border:'1px solid #1e2a35',
+            borderRadius:'3px', color:'#4a6274', padding:'5px', cursor:'pointer',
+            fontSize:'0.55rem', letterSpacing:'2px', fontFamily:'inherit',
+          }}>SIGN OUT</button>
         </div>
       </aside>
 
       {/* Main */}
       <main className="main-wrap" style={{
-        marginLeft:240, flex:1, padding:'1.75rem',
-        minHeight:'100vh', background:'#0a0a0f',
+        marginLeft:200, flex:1, padding:'1.5rem', minHeight:'100vh',
       }}>
         {children}
       </main>
 
       {/* Mobile nav */}
-      <nav className="mobile-nav" style={{
+      <nav className="mob-nav" style={{
         display:'none', position:'fixed', bottom:0, left:0, right:0,
-        background:'#0d0d16', borderTop:'1px solid #1e1e2e',
-        padding:'0.5rem 0', zIndex:50,
+        background:'#0d1117', borderTop:'1px solid #1e2a35',
+        zIndex:50, padding:'0.3rem 0',
       }}>
-        {NAV.map(({ href, label, icon }) => {
-          const active = pathname === href
+        {NAV.slice(0,6).map(({ href, label, icon }) => {
+          const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
           return (
             <Link key={href} href={href} style={{
               display:'flex', flexDirection:'column', alignItems:'center', gap:'2px',
-              padding:'0.4rem 0', flex:1, textDecoration:'none',
-              color: active ? '#6366f1' : '#334155',
+              padding:'0.3rem 0', flex:1, textDecoration:'none',
+              color: active ? '#00e5ff' : '#1e3a4a',
             }}>
-              <span style={{
-                width:28, height:28, borderRadius:'8px',
-                background: active ? 'linear-gradient(135deg, #4f46e5, #7c3aed)' : 'transparent',
-                display:'flex', alignItems:'center', justifyContent:'center',
-                fontSize:'0.9rem', color: active ? '#fff' : '#475569',
-              }}>{icon}</span>
-              <span style={{ fontSize:'0.55rem', letterSpacing:'0.05em',
-                textTransform:'uppercase', fontWeight: active ? 700 : 500 }}>
-                {label}
-              </span>
+              <span style={{ fontSize:'1rem' }}>{icon}</span>
+              <span style={{ fontSize:'0.45rem', letterSpacing:'1px',
+                textTransform:'uppercase' }}>{label}</span>
             </Link>
           )
         })}
