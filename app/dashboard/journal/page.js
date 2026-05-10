@@ -1,366 +1,515 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
-const MISTAKES = [
-  'Entered before Q2 complete','No Daily SMT','No 90M SMT',
-  'Moved SL to BE early','FOMO entry','No TPD trigger',
-  'Wrong True Open side','Chased price','Over-leveraged','Early exit',
+const CHECKLIST_STEPS = [
+  { id:'c_4h_tpd',    label:'4H TPD Confirmed' },
+  { id:'c_daily_smt', label:'Daily SMT on M15' },
+  { id:'c_90m_smt',   label:'90M SMT on M5' },
+  { id:'c_m5_tpd',    label:'M5 TPD Entry Trigger' },
+  { id:'c_true_opens',label:'Both True Opens Aligned' },
 ]
 
-const GRADE_COLOR = {
-  'A++':'#f59e0b','A+':'#10b981','A':'#34d399','B':'#6366f1','C':'#f97316','F':'#ef4444'
+const MISTAKES = [
+  'Entered before Q2 complete', '90M SMT before Daily SMT', 'No M5 TPD trigger',
+  'Price wrong side of True Opens', 'Stop not on swing high/low',
+  'Moved SL to BE before retracement', 'FOMO — missing confluence', 'No Daily SMT',
+  'Traded before news', 'Closed early', 'Overtraded / revenge', 'Sized up',
+]
+
+const GRADES = {
+  5:{ g:'A++', c:'#ffcc00' }, 4:{ g:'A+', c:'#39ff14' }, 3:{ g:'A', c:'#00e5ff' },
+  2:{ g:'B',  c:'#c084ff' }, 1:{ g:'C',  c:'#ff6b35' }, 0:{ g:'F', c:'#ff2d55' },
 }
 
-const emptyForm = {
-  symbol:'NQ', date:new Date().toISOString().slice(0,10),
-  session:'NY', direction:'LONG',
-  entry:'', sl:'', tp:'', exit:'', result:'WIN',
-  pnl:'', rr:'', grade:'A', narrative:'', mistakes:[], mood:3,
+const MOODS = ['😤','😟','😐','😊','🎯']
+
+const empty = {
+  date: new Date().toLocaleDateString('en-GB'),
+  instrument:'NQ', direction:'LONG', session:'NY',
+  session_time:'', cycle_bias:'', pt_bias:'',
+  entry:'', sl:'', tp:'', exit:'',
+  result:'win', pnl:'', pnl_dollar:'', rr:'', risk_pct:'1', risk_dollar:'',
+  grade:'A', narrative:'', mistakes:[], mood:3,
+  c_4h_tpd:false, c_daily_smt:false, c_90m_smt:false, c_m5_tpd:false, c_true_opens:false,
+  // Post-trade review
+  ptr_exec_rating:'', ptr_emotion_rating:'',
+  ptr_went_right:'', ptr_went_wrong:'', ptr_mistake_detail:'',
+  ptr_ideal_trade:'', ptr_rule_violation:'', ptr_take_again:'',
+  ptr_key_lesson:'', ptr_next_session:'',
 }
+
+const s = (color) => ({ // Input style helper
+  width:'100%', background:'#080b0f', border:`1px solid #1e2a35`,
+  borderRadius:'3px', padding:'8px 10px', color:'#eaf4fb',
+  fontFamily:'IBM Plex Mono, monospace', fontSize:'0.82rem', outline:'none',
+  boxSizing:'border-box', transition:'border-color .15s',
+})
 
 export default function JournalPage() {
-  const params  = useSearchParams()
-  const [trades,  setTrades]  = useState([])
-  const [loading, setLoading] = useState(true)
-  const [modal,   setModal]   = useState(false)
-  const [saving,  setSaving]  = useState(false)
-  const [filter,  setFilter]  = useState('ALL')
-  const [form,    setForm]    = useState(() => ({
-    ...emptyForm,
+  const params = useSearchParams()
+  const [form,   setForm]   = useState(() => ({
+    ...empty,
     ...(params.get('grade')     && { grade:     params.get('grade') }),
-    ...(params.get('symbol')    && { symbol:    params.get('symbol') }),
     ...(params.get('direction') && { direction: params.get('direction') }),
   }))
+  const [saving,  setSaving]  = useState(false)
+  const [saved,   setSaved]   = useState(false)
+  const [account, setAccount] = useState(null)
 
-  const loadTrades = useCallback(async () => {
-    const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    if (!user) return
-    const { data } = await supabase
-      .from('trades').select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-    setTrades(data || [])
-    setLoading(false)
+  useEffect(() => {
+    const getAcct = () => {
+      const saved = localStorage.getItem('tp-active-account')
+      return saved
+    }
+    setAccount(getAcct())
+
+    const handleChange = (e) => setAccount(e.detail?.id)
+    window.addEventListener('account-changed', handleChange)
+    return () => window.removeEventListener('account-changed', handleChange)
   }, [])
 
-  useEffect(() => { loadTrades() }, [loadTrades])
-  useEffect(() => { if (params.get('grade')) setModal(true) }, [params])
+  // Auto-calc confluence
+  const confluence = CHECKLIST_STEPS.filter(c => form[c.id]).length
+  const gradeInfo  = GRADES[confluence] || GRADES[0]
 
-  const calcRR = (f = form) => {
-    const entry=parseFloat(f.entry), sl=parseFloat(f.sl), tp=parseFloat(f.tp)
-    if (!entry||!sl||!tp) return f
-    const risk=Math.abs(entry-sl), reward=Math.abs(tp-entry)
-    const rr=risk>0?(reward/risk).toFixed(2):''
-    const exit=parseFloat(f.exit)
-    let pnl=f.pnl
-    if (exit&&!isNaN(exit)) {
-      pnl=f.direction==='LONG'?((exit-entry)*20).toFixed(0):((entry-exit)*20).toFixed(0)
-    }
-    return {...f, rr, pnl}
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const toggleCheck = (id) => {
+    const newVal = !form[id]
+    const newConf = CHECKLIST_STEPS.filter(c => c.id === id ? newVal : form[c.id]).length
+    setForm(p => ({ ...p, [id]: newVal, confluence: newConf, grade: GRADES[newConf].g }))
   }
 
-  const set = (key, val) => setForm(p => ({...p, [key]:val}))
   const toggleMistake = (m) => setForm(p => ({
-    ...p, mistakes:p.mistakes.includes(m)?p.mistakes.filter(x=>x!==m):[...p.mistakes,m],
+    ...p, mistakes: p.mistakes.includes(m)
+      ? p.mistakes.filter(x => x !== m)
+      : [...p.mistakes, m],
   }))
 
+  const autoCalc = () => {
+    const entry = parseFloat(form.entry), sl = parseFloat(form.sl), tp = parseFloat(form.tp)
+    const exit  = parseFloat(form.exit), risk$ = parseFloat(form.risk_dollar)
+    if (!entry || !sl || !tp) return
+    const riskPts   = Math.abs(entry - sl)
+    const rewardPts = Math.abs(tp - entry)
+    const rrRatio   = riskPts > 0 ? (rewardPts / riskPts).toFixed(1) : ''
+    const rr        = rrRatio ? `1:${rrRatio}` : ''
+    const pnlPts    = exit ? (form.direction === 'LONG' ? exit - entry : entry - exit) : null
+    const pnl$      = (pnlPts && risk$ && riskPts) ? ((pnlPts / riskPts) * risk$).toFixed(0) : ''
+    setForm(p => ({ ...p, rr, pnl: pnlPts?.toFixed(1) || p.pnl, pnl_dollar: pnl$ || p.pnl_dollar }))
+  }
+
   const save = async () => {
-    if (!form.entry||!form.sl||!form.tp) return
+    if (!form.entry || !form.sl || !form.tp) return alert('Entry, SL and TP are required.')
     setSaving(true)
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    const c = calcRR()
+    if (!session) return
+
     await supabase.from('trades').insert({
-      user_id:user.id, symbol:c.symbol, date:c.date, session:c.session,
-      direction:c.direction, entry:parseFloat(c.entry), sl:parseFloat(c.sl),
-      tp:parseFloat(c.tp), exit:c.exit?parseFloat(c.exit):null,
-      result:c.result, pnl:c.pnl?parseFloat(c.pnl):null,
-      rr:c.rr?parseFloat(c.rr):null, grade:c.grade,
-      narrative:c.narrative, mistakes:c.mistakes, mood:c.mood,
+      user_id:      session.user.id,
+      account_id:   account,
+      date:         form.date,
+      instrument:   form.instrument,
+      direction:    form.direction,
+      session:      form.session,
+      session_time: form.session_time,
+      cycle_bias:   form.cycle_bias,
+      pt_bias:      form.pt_bias,
+      entry:        parseFloat(form.entry),
+      sl:           parseFloat(form.sl),
+      tp:           parseFloat(form.tp),
+      exit:         form.exit ? parseFloat(form.exit) : null,
+      result:       form.result,
+      pnl:          form.pnl ? parseFloat(form.pnl) : null,
+      pnl_dollar:   form.pnl_dollar ? parseFloat(form.pnl_dollar) : null,
+      rr:           form.rr || null,
+      grade:        form.grade,
+      risk_pct:     form.risk_pct ? parseFloat(form.risk_pct) : null,
+      risk_dollar:  form.risk_dollar ? parseFloat(form.risk_dollar) : null,
+      c_4h_tpd:     form.c_4h_tpd,
+      c_daily_smt:  form.c_daily_smt,
+      c_90m_smt:    form.c_90m_smt,
+      c_m5_tpd:     form.c_m5_tpd,
+      c_true_opens: form.c_true_opens,
+      confluence:   confluence,
+      narrative:    form.narrative,
+      mistakes:     form.mistakes,
+      mood:         form.mood,
+      ptr_exec_rating:    form.ptr_exec_rating ? parseInt(form.ptr_exec_rating) : null,
+      ptr_emotion_rating: form.ptr_emotion_rating ? parseInt(form.ptr_emotion_rating) : null,
+      ptr_went_right:     form.ptr_went_right || null,
+      ptr_went_wrong:     form.ptr_went_wrong || null,
+      ptr_mistake_detail: form.ptr_mistake_detail || null,
+      ptr_ideal_trade:    form.ptr_ideal_trade || null,
+      ptr_rule_violation: form.ptr_rule_violation || null,
+      ptr_take_again:     form.ptr_take_again || null,
+      ptr_key_lesson:     form.ptr_key_lesson || null,
+      ptr_next_session:   form.ptr_next_session || null,
     })
-    setModal(false); setForm(emptyForm)
-    await loadTrades(); setSaving(false)
+
+    setSaved(true); setSaving(false)
+    setTimeout(() => setSaved(false), 3000)
+    setForm(empty)
   }
 
-  const inputStyle = {
-    width:'100%', background:'#0f172a', border:'1px solid #1e293b',
-    borderRadius:'8px', padding:'0.65rem 0.75rem', color:'#f8fafc',
-    fontSize:'0.88rem', outline:'none', boxSizing:'border-box',
-    transition:'border-color 0.15s',
-  }
+  const Label = ({ children, color='#4a6274' }) => (
+    <div style={{ fontSize:'0.62rem', letterSpacing:'2px', textTransform:'uppercase',
+      color, marginBottom:'5px', fontWeight:600 }}>{children}</div>
+  )
 
-  const F = ({ label, children }) => (
-    <div>
-      <label style={{ display:'block', color:'#475569', fontSize:'0.6rem',
-        letterSpacing:'0.15em', textTransform:'uppercase', marginBottom:'0.35rem',
-        fontWeight:600 }}>{label}</label>
+  const FG = ({ label, children, accent }) => (
+    <div style={{ marginBottom:'10px' }}>
+      <Label color={accent}>{label}</Label>
       {children}
     </div>
   )
 
-  const Input = ({ name, type='text', placeholder='' }) => (
-    <input type={type} value={form[name]} placeholder={placeholder}
-      onChange={e => set(name, e.target.value)}
-      onBlur={() => setForm(calcRR)}
-      style={inputStyle} />
+  const Inp = ({ id, type='text', placeholder='', min, step }) => (
+    <input type={type} value={form[id]} placeholder={placeholder}
+      min={min} step={step}
+      onChange={e => set(id, e.target.value)}
+      onBlur={autoCalc}
+      style={s()} />
   )
 
-  const Select = ({ name, opts }) => (
-    <select value={form[name]} onChange={e => set(name, e.target.value)} style={inputStyle}>
-      {opts.map(o => <option key={o}>{o}</option>)}
+  const Sel = ({ id, opts }) => (
+    <select value={form[id]} onChange={e => set(id, e.target.value)}
+      style={{ ...s(), cursor:'pointer' }}>
+      {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
     </select>
   )
 
-  const visible = filter==='ALL' ? trades : trades.filter(t => t.result===filter)
+  const Tex = ({ id, placeholder, rows=3, borderColor }) => (
+    <textarea value={form[id]} placeholder={placeholder} rows={rows}
+      onChange={e => set(id, e.target.value)}
+      style={{ ...s(), resize:'vertical', fontFamily:'inherit', lineHeight:'1.7',
+        ...(borderColor && { borderLeft:`2px solid ${borderColor}` }) }} />
+  )
+
+  const PtrRating = ({ field, opts }) => (
+    <div style={{ display:'flex', gap:'5px', flexWrap:'wrap' }}>
+      {opts.map(([v, l]) => (
+        <button key={v} onClick={() => set(field, v)} style={{
+          padding:'5px 10px', background: form[field]==v ? 'rgba(0,229,255,.12)' : '#0d1117',
+          border: form[field]==v ? '1px solid var(--accent,#00e5ff)' : '1px solid #1e2a35',
+          borderRadius:'3px', color: form[field]==v ? '#00e5ff' : '#4a6274',
+          fontFamily:'inherit', fontSize:'0.68rem', cursor:'pointer', transition:'all .15s',
+        }}>{l}</button>
+      ))}
+    </div>
+  )
 
   return (
-    <div>
-      <style>{`
-        .trade-row:hover { background: rgba(30,41,59,0.5) !important; }
-        input:focus, select:focus, textarea:focus { border-color: #4f46e5 !important; outline: none; }
-      `}</style>
-
+    <div style={{ maxWidth: 780 }}>
       {/* Header */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start',
-        marginBottom:'1.5rem', paddingBottom:'1rem', borderBottom:'1px solid #1e293b',
-        flexWrap:'wrap', gap:'1rem' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
+        marginBottom:'1.25rem' }}>
         <div>
-          <p style={{ color:'#6366f1', fontSize:'0.65rem', letterSpacing:'0.25em',
-            textTransform:'uppercase', margin:'0 0 0.25rem', fontWeight:700 }}>Cloud Sync</p>
-          <h1 style={{ color:'#f8fafc', fontSize:'1.75rem', fontWeight:900,
-            margin:0, letterSpacing:'-0.03em' }}>Trade Journal</h1>
+          <div style={{ color:'#4a6274', fontSize:'0.55rem', letterSpacing:'3px',
+            textTransform:'uppercase', marginBottom:'3px' }}>QT Trade Entry</div>
+          <div style={{ color:'#eaf4fb', fontSize:'1.4rem', fontWeight:900,
+            letterSpacing:'2px' }}>JOURNAL</div>
         </div>
-        <button onClick={() => setModal(true)} style={{
-          padding:'0.75rem 1.5rem',
-          background:'linear-gradient(135deg, #4f46e5, #7c3aed)',
-          border:'none', borderRadius:'10px', color:'#fff',
-          fontWeight:800, fontSize:'0.82rem', letterSpacing:'0.1em',
-          textTransform:'uppercase', cursor:'pointer',
-          boxShadow:'0 4px 16px rgba(79,70,229,0.35)',
-        }}>+ Log Trade</button>
+        {saved && <div style={{ color:'#39ff14', fontSize:'0.72rem', letterSpacing:'2px' }}>
+          ✓ TRADE SAVED
+        </div>}
       </div>
 
-      {/* Filters */}
-      <div style={{ display:'flex', gap:'0.4rem', marginBottom:'1.25rem' }}>
-        {['ALL','WIN','LOSS','BE'].map(f => (
-          <button key={f} onClick={() => setFilter(f)} style={{
-            padding:'0.4rem 0.9rem', borderRadius:'8px', fontSize:'0.72rem',
-            fontWeight:700, cursor:'pointer', transition:'all 0.15s',
-            background: filter===f
-              ? (f==='WIN'?'linear-gradient(135deg,#059669,#10b981)':f==='LOSS'?'linear-gradient(135deg,#dc2626,#ef4444)':f==='BE'?'linear-gradient(135deg,#1e293b,#1e293b)':'linear-gradient(135deg,#4f46e5,#7c3aed)')
-              : '#0f172a',
-            color: filter===f ? '#fff' : '#475569',
-            border: filter===f ? '1px solid transparent' : '1px solid #1e293b',
-          }}>{f}</button>
-        ))}
-        <span style={{ marginLeft:'auto', color:'#334155', fontSize:'0.72rem',
-          display:'flex', alignItems:'center' }}>{visible.length} trades</span>
-      </div>
-
-      {/* Table */}
-      <div style={{
-        background:'linear-gradient(135deg, #0f172a, #1a1a2e)',
-        border:'1px solid #1e293b', borderRadius:'16px', overflow:'hidden',
-      }}>
-        {loading ? (
-          <div style={{ padding:'3rem', textAlign:'center' }}>
-            <div style={{ color:'#334155', fontSize:'0.85rem' }}>Loading trades…</div>
-          </div>
-        ) : visible.length===0 ? (
-          <div style={{ padding:'3.5rem', textAlign:'center' }}>
-            <div style={{ fontSize:'3rem', marginBottom:'1rem' }}>📝</div>
-            <p style={{ color:'#475569', fontSize:'0.9rem', margin:'0 0 0.5rem', fontWeight:600 }}>
-              No trades {filter!=='ALL'?`with result: ${filter}`:'yet'}
-            </p>
-            <p style={{ color:'#334155', fontSize:'0.78rem', margin:0 }}>
-              Tap + Log Trade to add your first trade
-            </p>
-          </div>
-        ) : (
-          <div style={{ overflowX:'auto' }}>
-            <table style={{ width:'100%', borderCollapse:'collapse' }}>
-              <thead>
-                <tr style={{ background:'#0a0a14' }}>
-                  {['Date','Symbol','Dir','Entry','SL','TP','P&L','RR','Grade','Result'].map(h => (
-                    <th key={h} style={{ padding:'0.75rem 1rem', textAlign:'left',
-                      color:'#334155', fontSize:'0.6rem', letterSpacing:'0.15em',
-                      textTransform:'uppercase', borderBottom:'1px solid #1e293b',
-                      whiteSpace:'nowrap', fontWeight:600 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((t,i) => (
-                  <tr key={t.id} className="trade-row" style={{
-                    borderBottom: i<visible.length-1?'1px solid #0f172a':'none',
-                    transition:'background 0.1s',
-                  }}>
-                    <td style={{ padding:'0.8rem 1rem', color:'#475569',
-                      fontFamily:'monospace', fontSize:'0.75rem', whiteSpace:'nowrap' }}>{t.date}</td>
-                    <td style={{ padding:'0.8rem 1rem', color:'#f8fafc',
-                      fontWeight:800, fontSize:'0.85rem' }}>{t.symbol}</td>
-                    <td style={{ padding:'0.8rem 1rem' }}>
-                      <span style={{
-                        fontSize:'0.65rem', fontWeight:700, padding:'2px 7px',
-                        borderRadius:'5px',
-                        background:t.direction==='LONG'?'rgba(16,185,129,0.12)':'rgba(239,68,68,0.12)',
-                        color:t.direction==='LONG'?'#10b981':'#ef4444',
-                      }}>{t.direction==='LONG'?'▲ L':'▼ S'}</span>
-                    </td>
-                    {['entry','sl','tp'].map(k => (
-                      <td key={k} style={{ padding:'0.8rem 1rem', color:'#64748b',
-                        fontFamily:'monospace', fontSize:'0.78rem' }}>{t[k]}</td>
-                    ))}
-                    <td style={{ padding:'0.8rem 1rem', fontFamily:'monospace',
-                      fontSize:'0.85rem', fontWeight:800,
-                      color:(t.pnl||0)>0?'#10b981':(t.pnl||0)<0?'#ef4444':'#94a3b8' }}>
-                      {t.pnl!=null?`${t.pnl>0?'+':''}${t.pnl}`:'—'}
-                    </td>
-                    <td style={{ padding:'0.8rem 1rem', color:'#64748b',
-                      fontFamily:'monospace', fontSize:'0.78rem' }}>
-                      {t.rr?`${t.rr}R`:'—'}
-                    </td>
-                    <td style={{ padding:'0.8rem 1rem' }}>
-                      <span style={{ fontSize:'0.65rem', fontWeight:800, padding:'2px 8px',
-                        borderRadius:'5px', color:GRADE_COLOR[t.grade]||'#94a3b8',
-                        background:`${GRADE_COLOR[t.grade]||'#94a3b8'}12` }}>
-                        {t.grade||'—'}
-                      </span>
-                    </td>
-                    <td style={{ padding:'0.8rem 1rem' }}>
-                      <span style={{ fontSize:'0.65rem', fontWeight:800, padding:'2px 8px',
-                        borderRadius:'5px',
-                        background:t.result==='WIN'?'rgba(16,185,129,0.12)':t.result==='LOSS'?'rgba(239,68,68,0.12)':'rgba(100,116,139,0.12)',
-                        color:t.result==='WIN'?'#10b981':t.result==='LOSS'?'#ef4444':'#94a3b8' }}>
-                        {t.result}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Modal */}
-      {modal && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.8)',
-          backdropFilter:'blur(4px)', display:'flex', alignItems:'center',
-          justifyContent:'center', zIndex:100, padding:'1rem' }}>
-          <div style={{
-            background:'linear-gradient(135deg, #0d0d16, #0f172a)',
-            border:'1px solid #1e293b', borderRadius:'20px',
-            width:'100%', maxWidth:580, maxHeight:'90vh', overflowY:'auto',
-            padding:'1.75rem', boxShadow:'0 25px 60px rgba(0,0,0,0.6)',
-          }}>
-            <div style={{ display:'flex', justifyContent:'space-between',
-              alignItems:'center', marginBottom:'1.5rem' }}>
-              <div>
-                <h2 style={{ color:'#f8fafc', margin:'0 0 0.2rem', fontSize:'1.1rem',
-                  fontWeight:900 }}>Log Trade</h2>
-                <p style={{ color:'#334155', margin:0, fontSize:'0.72rem' }}>
-                  Add to your QT journal
-                </p>
-              </div>
-              <button onClick={() => setModal(false)} style={{
-                background:'#1e293b', border:'none', color:'#94a3b8',
-                fontSize:'1rem', cursor:'pointer', width:32, height:32,
-                borderRadius:'8px', display:'flex', alignItems:'center',
-                justifyContent:'center',
-              }}>✕</button>
-            </div>
-
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.85rem' }}>
-              <F label="Date"><Input name="date" type="date" /></F>
-              <F label="Symbol"><Select name="symbol" opts={['NQ','ES','MNQ','MES']} /></F>
-              <F label="Session"><Select name="session" opts={['London','NY','Overnight','Asian']} /></F>
-              <F label="Direction"><Select name="direction" opts={['LONG','SHORT']} /></F>
-              <F label="Entry Price"><Input name="entry" type="number" placeholder="21500" /></F>
-              <F label="Stop Loss"><Input name="sl" type="number" placeholder="21450" /></F>
-              <F label="Take Profit"><Input name="tp" type="number" placeholder="21600" /></F>
-              <F label="Exit Price"><Input name="exit" type="number" placeholder="actual exit" /></F>
-              <F label="Result"><Select name="result" opts={['WIN','LOSS','BE']} /></F>
-              <F label="Grade"><Select name="grade" opts={['A++','A+','A','B','C','F']} /></F>
-              <F label="P&L (pts)"><Input name="pnl" type="number" placeholder="auto-calc" /></F>
-              <F label="R:R"><Input name="rr" type="number" placeholder="auto-calc" /></F>
-            </div>
-
-            <div style={{ marginTop:'0.85rem' }}>
-              <F label="Trade Narrative">
-                <textarea value={form.narrative}
-                  onChange={e => set('narrative', e.target.value)}
-                  rows={3} placeholder="What did you see? SSMT? TPD? True Open alignment?"
-                  style={{ ...inputStyle, resize:'vertical', fontFamily:'inherit', lineHeight:1.6 }} />
-              </F>
-            </div>
-
-            <div style={{ marginTop:'0.85rem' }}>
-              <label style={{ display:'block', color:'#475569', fontSize:'0.6rem',
-                letterSpacing:'0.15em', textTransform:'uppercase',
-                marginBottom:'0.5rem', fontWeight:600 }}>Mistakes Tagged</label>
-              <div style={{ display:'flex', flexWrap:'wrap', gap:'0.35rem' }}>
-                {MISTAKES.map(m => {
-                  const sel = form.mistakes.includes(m)
-                  return (
-                    <button key={m} onClick={() => toggleMistake(m)} style={{
-                      padding:'0.3rem 0.65rem', borderRadius:'6px', fontSize:'0.7rem',
-                      cursor:'pointer', transition:'all 0.1s',
-                      background:sel?'rgba(239,68,68,0.1)':'#0f172a',
-                      color:sel?'#ef4444':'#475569',
-                      border:sel?'1px solid rgba(239,68,68,0.3)':'1px solid #1e293b',
-                    }}>{m}</button>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div style={{ marginTop:'0.85rem' }}>
-              <label style={{ display:'block', color:'#475569', fontSize:'0.6rem',
-                letterSpacing:'0.15em', textTransform:'uppercase',
-                marginBottom:'0.5rem', fontWeight:600 }}>Emotional State</label>
-              <div style={{ display:'flex', gap:'0.4rem' }}>
-                {[{v:1,e:'😤',l:'Revenge'},{v:2,e:'😟',l:'Anxious'},
-                  {v:3,e:'😐',l:'Neutral'},{v:4,e:'😊',l:'Focused'},{v:5,e:'🎯',l:'Zone'}]
-                  .map(({v,e,l}) => (
-                    <button key={v} onClick={() => set('mood',v)} style={{
-                      flex:1, padding:'0.5rem 0.1rem', borderRadius:'8px',
-                      cursor:'pointer', textAlign:'center', transition:'all 0.15s',
-                      background:form.mood===v?'rgba(99,102,241,0.15)':'#0f172a',
-                      border:form.mood===v?'1px solid rgba(99,102,241,0.4)':'1px solid #1e293b',
-                    }}>
-                      <div style={{ fontSize:'1.2rem' }}>{e}</div>
-                      <div style={{ fontSize:'0.52rem', color:form.mood===v?'#818cf8':'#334155',
-                        marginTop:'2px', fontWeight:600 }}>{l}</div>
-                    </button>
-                  ))}
-              </div>
-            </div>
-
-            <div style={{ display:'flex', gap:'0.75rem', marginTop:'1.5rem' }}>
-              <button onClick={save} disabled={saving} style={{
-                flex:1, padding:'0.85rem',
-                background:'linear-gradient(135deg, #4f46e5, #7c3aed)',
-                border:'none', borderRadius:'10px', color:'#fff',
-                fontWeight:800, fontSize:'0.82rem', letterSpacing:'0.1em',
-                textTransform:'uppercase', cursor:'pointer',
-                boxShadow:'0 4px 16px rgba(79,70,229,0.35)',
-                opacity:saving?0.7:1,
-              }}>{saving?'SAVING…':'SAVE TRADE →'}</button>
-              <button onClick={() => setModal(false)} style={{
-                padding:'0.85rem 1.25rem', background:'transparent',
-                border:'1px solid #1e293b', borderRadius:'10px',
-                color:'#475569', fontSize:'0.8rem', cursor:'pointer',
-              }}>Cancel</button>
-            </div>
-          </div>
+      {/* ── SECTION 1: Trade Setup ── */}
+      <div style={{ background:'#0d1117', border:'1px solid #1e2a35', borderRadius:'4px',
+        padding:'16px', marginBottom:'12px' }}>
+        <div style={{ color:'#00e5ff', fontSize:'0.62rem', letterSpacing:'3px',
+          textTransform:'uppercase', marginBottom:'14px', display:'flex',
+          alignItems:'center', gap:'8px', fontWeight:700 }}>
+          <div style={{ width:7, height:7, borderRadius:'50%', background:'#00e5ff',
+            boxShadow:'0 0 8px #00e5ff' }} />
+          TRADE SETUP
         </div>
-      )}
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+          <FG label="Date">
+            <input type="date" value={form.date.split('/').reverse().join('-')}
+              onChange={e => {
+                const d = new Date(e.target.value)
+                set('date', d.toLocaleDateString('en-GB'))
+              }}
+              style={{ ...s(), cursor:'pointer' }} />
+          </FG>
+          <FG label="Instrument">
+            <Sel id="instrument" opts={[['NQ','NQ'],['ES','ES'],['MNQ','MNQ'],['MES','MES'],['US30','US30']]} />
+          </FG>
+          <FG label="Direction">
+            <div style={{ display:'flex', gap:'6px' }}>
+              {['LONG','SHORT'].map(d => (
+                <button key={d} onClick={() => set('direction', d)} style={{
+                  flex:1, padding:'8px', borderRadius:'3px', fontFamily:'inherit',
+                  fontSize:'0.72rem', cursor:'pointer', letterSpacing:'2px',
+                  fontWeight: form.direction===d ? 700 : 400,
+                  background: form.direction===d
+                    ? (d==='LONG'?'rgba(57,255,20,.15)':'rgba(255,45,85,.15)')
+                    : '#080b0f',
+                  border: form.direction===d
+                    ? `1px solid ${d==='LONG'?'#39ff14':'#ff2d55'}`
+                    : '1px solid #1e2a35',
+                  color: form.direction===d ? (d==='LONG'?'#39ff14':'#ff2d55') : '#4a6274',
+                }}>{d==='LONG'?'▲ LONG':'▼ SHORT'}</button>
+              ))}
+            </div>
+          </FG>
+          <FG label="Session">
+            <Sel id="session" opts={[['NY','NY'],['London','London'],['Asian','Asian'],['Overnight','Overnight']]} />
+          </FG>
+          <FG label="Entry Time (EST)"><Inp id="session_time" placeholder="e.g. 09:35" /></FG>
+          <FG label="Result">
+            <Sel id="result" opts={[['win','✅ WIN'],['loss','❌ LOSS'],['breakeven','⚖️ BREAKEVEN']]} />
+          </FG>
+        </div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginTop:'4px' }}>
+          <FG label="Entry Price"><Inp id="entry" type="number" placeholder="e.g. 21500" /></FG>
+          <FG label="Stop Loss"><Inp id="sl" type="number" placeholder="e.g. 21450" /></FG>
+          <FG label="Take Profit"><Inp id="tp" type="number" placeholder="e.g. 21620" /></FG>
+          <FG label="Exit Price"><Inp id="exit" type="number" placeholder="actual exit" /></FG>
+          <FG label="Risk % of Account"><Inp id="risk_pct" type="number" placeholder="e.g. 1" step="0.1" /></FG>
+          <FG label="Risk $ Amount"><Inp id="risk_dollar" type="number" placeholder="e.g. 500" /></FG>
+          <FG label="P&L (pts, auto-calc)"><Inp id="pnl" type="number" placeholder="auto" /></FG>
+          <FG label="P&L ($, auto-calc)"><Inp id="pnl_dollar" type="number" placeholder="auto" /></FG>
+          <FG label="R:R (auto-calc)">
+            <input value={form.rr} readOnly placeholder="auto"
+              style={{ ...s(), color:'#00e5ff', cursor:'default' }} />
+          </FG>
+          <FG label="Grade (auto from checklist)">
+            <div style={{
+              padding:'8px 10px', background:'#080b0f', border:'1px solid #1e2a35',
+              borderRadius:'3px', display:'flex', alignItems:'center', gap:'8px',
+            }}>
+              <span style={{ fontFamily:"'Bebas Neue',sans-serif", fontSize:'1.5rem',
+                color:gradeInfo.c, textShadow:`0 0 8px ${gradeInfo.c}` }}>{gradeInfo.g}</span>
+              <span style={{ color:'#4a6274', fontSize:'0.65rem' }}>{confluence}/5 confluence</span>
+            </div>
+          </FG>
+        </div>
+
+        {/* Bias */}
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginTop:'4px' }}>
+          <FG label="Cycle Bias">
+            <Sel id="cycle_bias" opts={[['','— Select —'],['Q1 Acc','Q1 Accumulation'],['Q2 Manip','Q2 Manipulation'],['Q3 Dist','Q3 Distribution'],['Q4 Rev','Q4 Reversal']]} />
+          </FG>
+          <FG label="Price Action Bias">
+            <div style={{ display:'flex', gap:'6px' }}>
+              {[['bull','🐂 BULL'],['bear','🐻 BEAR'],['neutral','⚖️ NEUTRAL']].map(([v,l]) => (
+                <button key={v} onClick={() => set('pt_bias', v)} style={{
+                  flex:1, padding:'6px 4px', borderRadius:'3px', fontFamily:'inherit',
+                  fontSize:'0.6rem', cursor:'pointer', letterSpacing:'1px',
+                  background: form.pt_bias===v ? 'rgba(0,229,255,.08)' : '#080b0f',
+                  border: form.pt_bias===v ? '1px solid rgba(0,229,255,.3)' : '1px solid #1e2a35',
+                  color: form.pt_bias===v ? '#00e5ff' : '#4a6274',
+                }}>{l}</button>
+              ))}
+            </div>
+          </FG>
+        </div>
+      </div>
+
+      {/* ── SECTION 2: QT Checklist ── */}
+      <div style={{ background:'#0d1117', border:'1px solid #1e2a35', borderRadius:'4px',
+        padding:'16px', marginBottom:'12px' }}>
+        <div style={{ color:'#00e5ff', fontSize:'0.62rem', letterSpacing:'3px',
+          textTransform:'uppercase', marginBottom:'14px', display:'flex',
+          alignItems:'center', gap:'8px', fontWeight:700 }}>
+          <div style={{ width:7, height:7, borderRadius:'50%', background:'#00e5ff',
+            boxShadow:'0 0 8px #00e5ff' }} />
+          QT CONFLUENCE STACK
+        </div>
+
+        <div style={{ display:'flex', flexDirection:'column', gap:'6px', marginBottom:'12px' }}>
+          {CHECKLIST_STEPS.map((step, i) => (
+            <div key={step.id} onClick={() => toggleCheck(step.id)} style={{
+              display:'flex', alignItems:'center', gap:'10px',
+              padding:'9px 12px', borderRadius:'3px', cursor:'pointer',
+              background: form[step.id] ? 'rgba(57,255,20,.06)' : '#080b0f',
+              border: form[step.id] ? '1px solid rgba(57,255,20,.25)' : '1px solid #1e2a35',
+              transition:'all .15s', userSelect:'none',
+            }}>
+              <div style={{
+                width:18, height:18, borderRadius:'3px', flexShrink:0,
+                background: form[step.id] ? '#39ff14' : 'transparent',
+                border:`2px solid ${form[step.id] ? '#39ff14' : '#1e2a35'}`,
+                display:'flex', alignItems:'center', justifyContent:'center',
+                transition:'all .15s',
+              }}>
+                {form[step.id] && <span style={{ color:'#000', fontSize:'0.7rem', fontWeight:900 }}>✓</span>}
+              </div>
+              <span style={{ color:'#4a6274', fontSize:'0.62rem', fontFamily:'monospace',
+                fontWeight:700, minWidth:20 }}>0{i+1}</span>
+              <span style={{ color:form[step.id]?'#eaf4fb':'#4a6274', fontSize:'0.8rem',
+                fontWeight:form[step.id]?600:400 }}>{step.label}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Progress bar */}
+        <div style={{ background:'#1e2a35', borderRadius:'3px', height:5, overflow:'hidden' }}>
+          <div style={{ width:`${(confluence/5)*100}%`, height:'100%',
+            background:`linear-gradient(90deg,${gradeInfo.c},${gradeInfo.c}88)`,
+            transition:'width .4s ease' }} />
+        </div>
+        <div style={{ display:'flex', justifyContent:'space-between', marginTop:'6px' }}>
+          <span style={{ color:'#4a6274', fontSize:'0.58rem' }}>{confluence}/5 steps confirmed</span>
+          <span style={{ color:gradeInfo.c, fontWeight:700, fontSize:'0.7rem' }}>GRADE {gradeInfo.g}</span>
+        </div>
+      </div>
+
+      {/* ── SECTION 3: Notes & Mistakes ── */}
+      <div style={{ background:'#0d1117', border:'1px solid #1e2a35', borderRadius:'4px',
+        padding:'16px', marginBottom:'12px' }}>
+        <div style={{ color:'#00e5ff', fontSize:'0.62rem', letterSpacing:'3px',
+          textTransform:'uppercase', marginBottom:'14px', display:'flex',
+          alignItems:'center', gap:'8px', fontWeight:700 }}>
+          <div style={{ width:7, height:7, borderRadius:'50%', background:'#00e5ff',
+            boxShadow:'0 0 8px #00e5ff' }} />
+          TRADE NOTES
+        </div>
+
+        <FG label="Trade Narrative">
+          <Tex id="narrative" placeholder="Describe your trade: what did you see, why did you take it, what confirmed your bias? SMT location, TPD candles, True Open alignment..." rows={4} />
+        </FG>
+
+        <FG label="Mistakes Tagged">
+          <div style={{ display:'flex', flexWrap:'wrap', gap:'5px' }}>
+            {MISTAKES.map(m => {
+              const sel = form.mistakes.includes(m)
+              return (
+                <button key={m} onClick={() => toggleMistake(m)} style={{
+                  padding:'6px 10px', borderRadius:'3px', fontSize:'0.7rem', cursor:'pointer',
+                  fontFamily:'inherit', transition:'all .12s',
+                  background: sel ? 'rgba(255,45,85,.08)' : '#080b0f',
+                  color: sel ? '#ff2d55' : '#4a6274',
+                  border: sel ? '1px solid rgba(255,45,85,.3)' : '1px solid #1e2a35',
+                }}>{m}</button>
+              )
+            })}
+          </div>
+        </FG>
+
+        <FG label="Emotional State">
+          <div style={{ display:'flex', gap:'6px' }}>
+            {MOODS.map((e, i) => (
+              <button key={i} onClick={() => set('mood', i+1)} style={{
+                flex:1, padding:'8px 4px', borderRadius:'3px', cursor:'pointer',
+                textAlign:'center', fontSize:'1.1rem', background:'#080b0f',
+                border: form.mood===i+1 ? '1px solid rgba(0,229,255,.4)' : '1px solid #1e2a35',
+                transition:'all .15s',
+              }}>
+                <div>{e}</div>
+                <div style={{ fontSize:'0.48rem', color:form.mood===i+1?'#00e5ff':'#1e3a4a',
+                  marginTop:'3px', letterSpacing:'1px', fontFamily:'monospace' }}>
+                  {['Revenge','Anxious','Neutral','Focused','Zone'][i]}
+                </div>
+              </button>
+            ))}
+          </div>
+        </FG>
+      </div>
+
+      {/* ── SECTION 4: Post-Trade Review ── */}
+      <div style={{ background:'#0d1117', border:'1px solid #1e2a35', borderRadius:'4px',
+        borderLeft:'3px solid #ff6b35', padding:'16px', marginBottom:'12px' }}>
+        <div style={{ color:'#ff6b35', fontSize:'0.62rem', letterSpacing:'3px',
+          textTransform:'uppercase', marginBottom:'14px', display:'flex',
+          alignItems:'center', gap:'8px', fontWeight:700 }}>
+          <div style={{ width:7, height:7, borderRadius:'50%', background:'#ff6b35',
+            boxShadow:'0 0 8px #ff6b35' }} />
+          POST-TRADE REVIEW
+        </div>
+
+        <FG label="Execution Rating" accent="#ff6b35">
+          <PtrRating field="ptr_exec_rating" opts={[
+            [1,'1 — Poor'],[2,'2 — Below Avg'],[3,'3 — Neutral'],[4,'4 — Good'],[5,'5 — Perfect'],
+          ]} />
+        </FG>
+
+        <FG label="Emotional Control" accent="#ff6b35">
+          <PtrRating field="ptr_emotion_rating" opts={[
+            [1,'1 — Reactive'],[2,'2 — Struggled'],[3,'3 — Neutral'],[4,'4 — Calm'],[5,'5 — Ice-cold'],
+          ]} />
+        </FG>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+          <FG label="What Went RIGHT">
+            <Tex id="ptr_went_right" placeholder="Entry timing, patience, SL placement..." rows={3} borderColor="#39ff14" />
+          </FG>
+          <FG label="What Went WRONG">
+            <Tex id="ptr_went_wrong" placeholder="Rushed entry, wrong SL, ignored rules..." rows={3} borderColor="#ff2d55" />
+          </FG>
+        </div>
+
+        <FG label="Detailed Mistake Analysis">
+          <Tex id="ptr_mistake_detail" rows={4}
+            placeholder="Break down every mistake: Why did it happen? What was your mental state? What rule did you break? What was the cost?" />
+        </FG>
+
+        <FG label="Ideal Trade (what should have happened)">
+          <Tex id="ptr_ideal_trade" rows={3}
+            placeholder="Describe the perfect version of this trade: entry, SL, management, exit..." />
+        </FG>
+
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px' }}>
+          <FG label="Rule Violation">
+            <Sel id="ptr_rule_violation" opts={[
+              ['','None'],
+              ['Entered before 4H TPD','Entered before 4H TPD'],
+              ['90M before Daily SMT','90M before Daily SMT'],
+              ['No M5 TPD','No M5 TPD'],
+              ['Wrong True Open side','Wrong True Open side'],
+              ['SL not on swing','SL not on swing'],
+              ['Moved SL to BE early','Moved SL to BE early'],
+              ['FOMO entry','FOMO entry'],
+              ['Traded before news','Traded before news'],
+              ['Closed early','Closed early'],
+              ['Overtraded','Overtraded'],
+              ['Other','Other (see notes)'],
+            ]} />
+          </FG>
+          <FG label="Would You Take Again?">
+            <Sel id="ptr_take_again" opts={[
+              ['','-- Select --'],
+              ['yes','✅ Yes — Same setup'],
+              ['yes-adjusted','⚡ Yes — With adjustments'],
+              ['no','❌ No — Below standard'],
+              ['no-different','🚫 No — Market different'],
+            ]} />
+          </FG>
+        </div>
+
+        <FG label="Key Lesson (detailed)">
+          <Tex id="ptr_key_lesson" rows={3}
+            placeholder="What is the ONE most important lesson? How will you apply it specifically next trade?" />
+        </FG>
+
+        <FG label="Next Session Plan">
+          <Tex id="ptr_next_session" rows={3}
+            placeholder="What will you do differently? Specific setups to watch, rules to reinforce, behaviours to avoid?" />
+        </FG>
+      </div>
+
+      {/* Save */}
+      <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
+        <button onClick={save} disabled={saving} style={{
+          padding:'11px 24px', background:saving?'rgba(57,255,20,.05)':'rgba(57,255,20,.12)',
+          border:'1px solid rgba(57,255,20,.4)', borderRadius:'3px',
+          color:saving?'#1e3a4a':'#39ff14', fontFamily:'inherit', fontSize:'0.78rem',
+          letterSpacing:'2px', cursor:saving?'not-allowed':'pointer', transition:'all .15s',
+        }}>{saving ? 'SAVING…' : '✓ SAVE TRADE'}</button>
+        <button onClick={() => setForm(empty)} style={{
+          padding:'11px 18px', background:'rgba(0,229,255,.08)', border:'1px solid rgba(0,229,255,.2)',
+          borderRadius:'3px', color:'#00e5ff', fontFamily:'inherit', fontSize:'0.78rem',
+          letterSpacing:'2px', cursor:'pointer',
+        }}>↺ CLEAR</button>
+      </div>
     </div>
   )
 }
