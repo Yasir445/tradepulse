@@ -1,39 +1,37 @@
 'use client'
 import { useState, useRef, useCallback } from 'react'
 
-const SYSTEM = `You are an expert Quarterly Theory (QT) and ICT framework analyst for NQ/ES futures.
+const SYSTEM_PROMPT = `You are an expert Quarterly Theory (QT) and ICT framework analyst specializing in NQ/ES futures trading.
 
-QT Framework:
-- Q1=Accumulation, Q2=Manipulation, Q3=Distribution, Q4=Reversal (AMD cycle)
+QT Framework Reference:
+- Q1=Accumulation, Q2=Manipulation, Q3=Distribution, Q4=Reversal
 - SSMT = Sequential SMT divergence between NQ and ES at swing high/low
-- TPD = Three-candle Pattern Divergence — one makes new swing, other fails
+- TPD = Three-candle Pattern Divergence — one asset makes new swing, other fails  
 - True Opens: Daily=12AM EST, London=1:30AM, NY=7:30AM
-- PSP = Power of Swing Point (large wick, small body candle)
-- Two-stage SSMT = highest probability (Daily + 90M)
-- Best entries: 9:00-10:30 NY (Q3 of Q3)
-- Grade A++: 5/5 confluence. A+: 4/5. A: 3/5. B: 2/5. C: 1/5. F: No valid setup.
+- PSP = Power of Swing Point (large wick, small body)
+- Two-stage SSMT = highest probability (Daily + 90M confirmation)
+- Best entry window: 9:00-10:30 NY (Q3 of Q3)
+- Grade A++: 5/5 confluence. A+: 4/5. A: 3/5. B: 2/5. C: 1/5. F: No setup.
 
-If only one chart/asset shown, note SSMT cannot be fully confirmed — requires NQ vs ES comparison.
-
-Analyze this chart and return ONLY valid JSON. No markdown, no backticks, no explanation outside JSON:
+Analyze the chart and return ONLY this exact JSON structure with no markdown or backticks:
 {
-  "cycle": "detected cycle position e.g. Q3 of Daily, Q2 of 90M",
+  "cycle": "e.g. Q3 of Daily cycle",
   "bias": "BULLISH or BEARISH",
   "ssmt_detected": true or false,
   "tpd_detected": true or false,
   "psp_detected": true or false,
-  "true_open_position": "e.g. Price below Daily TO and NY TO — bullish alignment",
+  "true_open_position": "description of price vs true opens",
   "confluence_score": 0 to 5,
-  "entry_zone": "specific description of entry area",
-  "stop_loss": "where to place SL and why",
-  "target": "DOL or key target level",
-  "invalidation": "what price action would invalidate this setup",
   "grade": "A++ or A+ or A or B or C or F",
-  "grade_reasons": ["reason 1", "reason 2", "reason 3"],
+  "entry_zone": "specific entry description",
+  "stop_loss": "SL placement and reasoning",
+  "target": "target or DOL description",
+  "invalidation": "what invalidates this setup",
+  "grade_reasons": ["reason 1", "reason 2"],
+  "key_observations": ["obs 1", "obs 2", "obs 3"],
   "mistakes_to_avoid": ["mistake 1", "mistake 2"],
-  "key_observations": ["obs 1", "obs 2", "obs 3", "obs 4"],
   "session": "London or NY or Asian or Unknown",
-  "summary": "2-3 sentence plain English summary of the setup"
+  "summary": "2-3 sentence plain English analysis summary"
 }`
 
 export default function AnalyzerPage() {
@@ -43,6 +41,8 @@ export default function AnalyzerPage() {
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
   const [drag,     setDrag]     = useState(false)
+  const [provider, setProvider] = useState('gemini')
+  const [zoomed,   setZoomed]   = useState(false)
   const fileRef = useRef(null)
 
   const loadFile = (file) => {
@@ -66,47 +66,63 @@ export default function AnalyzerPage() {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image, mimeType, system: SYSTEM }),
+        body: JSON.stringify({ image, mimeType, system: SYSTEM_PROMPT, provider }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Analysis failed')
       setResult(data)
     } catch (e) {
-      setError(e.message || 'Analysis failed. Check your API key in Vercel settings.')
+      setError(e.message || 'Analysis failed. Check your API keys in Vercel.')
     }
     setLoading(false)
   }
 
-  const GC = { 'A++':'#ffcc00','A+':'#39ff14','A':'#00e5ff','B':'#c084ff','C':'#ff6b35','F':'#ff2d55' }
+  const GC = { 'A++':'#ffcc44','A+':'#00ff88','A':'#00d4ff','B':'#a855f7','C':'#ff6b35','F':'#ff3366' }
 
-  const Chip = ({ v, color }) => (
-    <span style={{ fontSize:'0.65rem', padding:'2px 8px', borderRadius:'3px',
-      background:`${color}12`, color, border:`1px solid ${color}30`,
-      letterSpacing:'1px', fontWeight:600 }}>{v}</span>
-  )
-
-  const Field = ({ label, value, color='#c9d6df', borderColor }) => value ? (
-    <div style={{ marginBottom:'10px' }}>
-      <div style={{ color:'#4a6274', fontSize:'0.55rem', letterSpacing:'2px',
-        textTransform:'uppercase', marginBottom:'4px', fontWeight:600 }}>{label}</div>
-      <div style={{ color, fontSize:'0.78rem', lineHeight:1.6,
-        background:'#0d1117', borderRadius:'3px', padding:'8px 10px',
-        borderLeft: borderColor ? `2px solid ${borderColor}` : '2px solid #1e2a35' }}>
-        {value}
-      </div>
+  const ResultChip = ({ label, value, ok }) => (
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+      padding:'8px 10px', background:'var(--bg-1)', borderRadius:'var(--radius)',
+      border:'1px solid var(--border)', marginBottom:6 }}>
+      <span style={{ color:'var(--text-2)', fontSize:'0.75rem', fontFamily:'var(--font-mono)' }}>{label}</span>
+      <span style={{ fontSize:'0.68rem', fontWeight:800, padding:'2px 8px',
+        borderRadius:3, fontFamily:'var(--font-mono)',
+        background: ok===true?'var(--green-dim)':ok===false?'var(--red-dim)':'var(--cyan-dim)',
+        color: ok===true?'var(--green)':ok===false?'var(--red)':'var(--cyan)',
+        border: `1px solid ${ok===true?'rgba(0,255,136,0.2)':ok===false?'rgba(255,51,102,0.2)':'rgba(0,212,255,0.2)'}`,
+      }}>{value}</span>
     </div>
-  ) : null
+  )
 
   return (
     <div style={{ maxWidth: 760 }}>
       {/* Header */}
-      <div style={{ marginBottom:'1.25rem' }}>
-        <div style={{ color:'#4a6274', fontSize:'0.55rem', letterSpacing:'3px',
-          textTransform:'uppercase', marginBottom:'3px' }}>Powered by Claude AI</div>
-        <div style={{ color:'#eaf4fb', fontSize:'1.4rem', fontWeight:900,
-          letterSpacing:'2px' }}>QT CHART ANALYZER</div>
-        <div style={{ color:'#4a6274', fontSize:'0.72rem', marginTop:'5px' }}>
-          Upload any TradingView screenshot → instant QT framework breakdown
+      <div style={{ marginBottom:'1.5rem' }}>
+        <div style={{ fontSize:'0.58rem', letterSpacing:'0.2em', color:'var(--text-3)',
+          fontFamily:'var(--font-mono)', marginBottom:4 }}>AI POWERED</div>
+        <h1 style={{ fontFamily:'var(--font-display)', fontSize:'2rem', fontWeight:800,
+          color:'var(--text-1)', letterSpacing:'-0.02em', lineHeight:1, marginBottom:6 }}>
+          QT Chart Analyzer
+        </h1>
+        <p style={{ color:'var(--text-2)', fontSize:'0.82rem' }}>
+          Upload any TradingView screenshot for instant QT framework breakdown
+        </p>
+      </div>
+
+      {/* Provider selector */}
+      <div style={{ display:'flex', gap:6, marginBottom:'1rem' }}>
+        {[['gemini','⚡ Gemini (Free)'],['anthropic','◎ Claude (Paid)']].map(([v,l]) => (
+          <button key={v} onClick={() => setProvider(v)} style={{
+            padding:'6px 12px', borderRadius:'var(--radius)', cursor:'pointer',
+            fontFamily:'var(--font-mono)', fontSize:'0.62rem', letterSpacing:'0.1em',
+            background: provider===v ? 'var(--cyan-dim)' : 'var(--bg-2)',
+            border: `1px solid ${provider===v ? 'rgba(0,212,255,0.3)' : 'var(--border)'}`,
+            color: provider===v ? 'var(--cyan)' : 'var(--text-3)',
+            transition:'all 0.15s',
+          }}>{l}</button>
+        ))}
+        <div style={{ marginLeft:'auto', fontSize:'0.6rem', color:'var(--text-3)',
+          fontFamily:'var(--font-mono)', display:'flex', alignItems:'center' }}>
+          {provider === 'gemini' ? 'Requires GEMINI_API_KEY in Vercel' : 'Requires ANTHROPIC_API_KEY in Vercel'}
         </div>
       </div>
 
@@ -115,12 +131,14 @@ export default function AnalyzerPage() {
         onDrop={onDrop}
         onDragOver={e => { e.preventDefault(); setDrag(true) }}
         onDragLeave={() => setDrag(false)}
-        onClick={() => fileRef.current?.click()}
+        onClick={() => !image && fileRef.current?.click()}
         style={{
-          border:`1px dashed ${drag?'#00e5ff':image?'rgba(57,255,20,.4)':'#1e2a35'}`,
-          borderRadius:'4px', padding:'1.75rem', textAlign:'center', cursor:'pointer',
-          background: drag ? 'rgba(0,229,255,.03)' : '#0d1117',
-          marginBottom:'1rem', transition:'all .2s',
+          border:`1px dashed ${drag?'var(--cyan)':image?'rgba(0,255,136,0.4)':'var(--border)'}`,
+          borderRadius:'var(--radius-lg)', padding: image ? '12px' : '2rem',
+          textAlign: image ? 'left' : 'center',
+          cursor: image ? 'default' : 'pointer',
+          background: drag ? 'var(--cyan-dim)' : 'var(--bg-2)',
+          marginBottom:'1rem', transition:'all 0.2s', position:'relative',
         }}
       >
         <input ref={fileRef} type="file" accept="image/*"
@@ -128,168 +146,176 @@ export default function AnalyzerPage() {
 
         {image ? (
           <div>
-            <img src={`data:${mimeType};base64,${image}`} alt="Chart"
-              style={{ maxHeight:260, maxWidth:'100%', borderRadius:'3px',
-                objectFit:'contain', border:'1px solid #1e2a35' }} />
-            <div style={{ color:'#39ff14', fontSize:'0.65rem', marginTop:'8px',
-              letterSpacing:'2px' }}>✓ CHART LOADED — CLICK TO REPLACE</div>
+            <div style={{ position:'relative' }}>
+              <img src={`data:${mimeType};base64,${image}`} alt="Chart"
+                style={{ maxHeight:280, maxWidth:'100%', borderRadius:'var(--radius)',
+                  objectFit:'contain', border:'1px solid var(--border)',
+                  cursor:'pointer', display:'block', margin:'0 auto' }}
+                onClick={() => setZoomed(true)} />
+              {zoomed && (
+                <div onClick={() => setZoomed(false)} style={{
+                  position:'fixed', inset:0, background:'rgba(4,5,8,0.95)',
+                  zIndex:200, display:'flex', alignItems:'center',
+                  justifyContent:'center', padding:'1rem', cursor:'pointer',
+                }}>
+                  <img src={`data:${mimeType};base64,${image}`}
+                    style={{ maxHeight:'90vh', maxWidth:'95vw',
+                      borderRadius:'var(--radius)', border:'1px solid var(--border)' }} />
+                </div>
+              )}
+            </div>
+            <div style={{ display:'flex', gap:8, marginTop:8, justifyContent:'center' }}>
+              <button onClick={() => fileRef.current?.click()}
+                className="btn btn-ghost" style={{ fontSize:'0.62rem' }}>
+                ↑ REPLACE
+              </button>
+              <button onClick={() => { setImage(null); setResult(null) }}
+                className="btn btn-ghost" style={{ fontSize:'0.62rem', color:'var(--red)' }}>
+                ✕ REMOVE
+              </button>
+            </div>
           </div>
         ) : (
-          <div>
-            <div style={{ fontSize:'2rem', marginBottom:'0.6rem', color:'#1e3a4a' }}>📊</div>
-            <div style={{ color:'#4a6274', fontSize:'0.78rem', marginBottom:'4px' }}>
-              Drop chart screenshot here or click to upload
+          <>
+            <div style={{ fontSize:'2.5rem', marginBottom:'0.6rem' }}>📊</div>
+            <div style={{ color:'var(--text-2)', fontSize:'0.85rem', marginBottom:4 }}>
+              Drop your TradingView screenshot here
             </div>
-            <div style={{ color:'#1e3a4a', fontSize:'0.65rem' }}>
-              PNG · JPG · TradingView screenshots work best
+            <div style={{ color:'var(--text-3)', fontSize:'0.65rem',
+              fontFamily:'var(--font-mono)' }}>
+              PNG · JPG · WEBP · Click or drag to upload
             </div>
-          </div>
+          </>
         )}
       </div>
 
       {image && (
         <button onClick={analyze} disabled={loading} style={{
           width:'100%', padding:'11px',
-          background: loading ? 'rgba(0,229,255,.04)' : 'rgba(0,229,255,.1)',
-          border: `1px solid ${loading ? '#1e2a35' : 'rgba(0,229,255,.4)'}`,
-          borderRadius:'4px', color: loading ? '#1e3a4a' : '#00e5ff',
-          fontFamily:'IBM Plex Mono, monospace', fontSize:'0.8rem',
-          letterSpacing:'3px', textTransform:'uppercase',
-          cursor: loading ? 'not-allowed' : 'pointer',
-          marginBottom:'1rem', transition:'all .2s',
+          background: loading ? 'var(--bg-2)' : 'var(--cyan-dim)',
+          border:`1px solid ${loading?'var(--border)':'rgba(0,212,255,0.4)'}`,
+          borderRadius:'var(--radius-lg)',
+          color: loading ? 'var(--text-3)' : 'var(--cyan)',
+          fontFamily:'var(--font-mono)', fontSize:'0.78rem', letterSpacing:'0.15em',
+          textTransform:'uppercase', cursor: loading ? 'not-allowed' : 'pointer',
+          marginBottom:'1rem', transition:'all 0.2s',
+          boxShadow: loading ? 'none' : '0 0 20px var(--cyan-glow)',
         }}>
-          {loading ? '⚡ ANALYZING WITH CLAUDE AI…' : '⚡ ANALYZE QT FRAMEWORK →'}
+          {loading ? '⚡ ANALYZING WITH AI…' : '⚡ ANALYZE QT FRAMEWORK →'}
         </button>
       )}
 
       {error && (
-        <div style={{ background:'rgba(255,45,85,.08)', border:'1px solid rgba(255,45,85,.2)',
-          borderRadius:'4px', padding:'10px 14px', color:'#ff2d55',
-          fontSize:'0.75rem', marginBottom:'1rem', letterSpacing:'1px' }}>
+        <div style={{ background:'var(--red-dim)', border:'1px solid rgba(255,51,102,0.2)',
+          borderRadius:'var(--radius)', padding:'10px 14px', color:'var(--red)',
+          fontSize:'0.78rem', fontFamily:'var(--font-mono)', marginBottom:'1rem' }}>
           ⚠ {error}
         </div>
       )}
 
       {result && (
-        <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
 
           {/* Grade + Bias hero */}
-          <div style={{ display:'grid', gridTemplateColumns:'auto 1fr', gap:'10px',
-            background:'#0d1117', border:'1px solid #1e2a35', borderRadius:'4px',
-            padding:'14px', alignItems:'center' }}>
-            <div style={{
-              width:72, height:72, borderRadius:'4px', flexShrink:0,
-              background:`${GC[result.grade]||'#4a6274'}12`,
-              border:`2px solid ${GC[result.grade]||'#4a6274'}`,
-              display:'flex', alignItems:'center', justifyContent:'center',
-              flexDirection:'column', gap:'2px',
-            }}>
-              <span style={{ color:GC[result.grade]||'#eaf4fb', fontFamily:"'Bebas Neue',sans-serif",
-                fontSize:'2rem', lineHeight:1,
-                textShadow:`0 0 12px ${GC[result.grade]||'transparent'}` }}>{result.grade}</span>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+            <div style={{ background:'var(--bg-2)', border:`1px solid ${GC[result.grade]||'var(--border)'}33`,
+              borderRadius:'var(--radius-lg)', padding:'1.25rem', textAlign:'center',
+              position:'relative', overflow:'hidden' }}>
+              <div style={{ position:'absolute', top:0, left:0, right:0, height:2,
+                background:`linear-gradient(90deg, ${GC[result.grade]||'transparent'}, transparent)` }} />
+              <div style={{ fontSize:'0.58rem', letterSpacing:'0.2em', color:'var(--text-3)',
+                fontFamily:'var(--font-mono)', marginBottom:10 }}>SETUP GRADE</div>
+              <div style={{ fontFamily:'var(--font-mono)', fontSize:'3rem', fontWeight:800,
+                color:GC[result.grade]||'var(--text-1)', lineHeight:1,
+                textShadow:`0 0 20px ${GC[result.grade]||'transparent'}`,
+                marginBottom:8 }}>{result.grade}</div>
+              {result.grade_reasons?.map((r,i) => (
+                <div key={i} style={{ color:'var(--text-3)', fontSize:'0.65rem',
+                  margin:'3px 0', textAlign:'left' }}>• {r}</div>
+              ))}
             </div>
-            <div>
-              <div style={{ display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap',
-                marginBottom:'7px' }}>
-                <Chip v={result.bias} color={result.bias==='BULLISH'?'#39ff14':'#ff2d55'} />
-                <Chip v={result.session} color='#00e5ff' />
-                <Chip v={`${result.confluence_score||0}/5 CONFLUENCE`} color='#c084ff' />
+
+            <div style={{ background:'var(--bg-2)',
+              border:`1px solid ${result.bias==='BULLISH'?'rgba(0,255,136,0.2)':'rgba(255,51,102,0.2)'}`,
+              borderRadius:'var(--radius-lg)', padding:'1.25rem', textAlign:'center',
+              position:'relative', overflow:'hidden' }}>
+              <div style={{ position:'absolute', top:0, left:0, right:0, height:2,
+                background:`linear-gradient(90deg, ${result.bias==='BULLISH'?'var(--green)':'var(--red)'}, transparent)` }} />
+              <div style={{ fontSize:'0.58rem', letterSpacing:'0.2em', color:'var(--text-3)',
+                fontFamily:'var(--font-mono)', marginBottom:10 }}>BIAS</div>
+              <div style={{ fontSize:'2.5rem', marginBottom:6 }}>
+                {result.bias==='BULLISH'?'▲':'▼'}
               </div>
-              <div style={{ color:'#c9d6df', fontSize:'0.78rem', lineHeight:1.6 }}>
+              <div style={{ fontFamily:'var(--font-mono)', fontWeight:800, fontSize:'0.9rem',
+                color:result.bias==='BULLISH'?'var(--green)':'var(--red)',
+                marginBottom:4 }}>{result.bias}</div>
+              <div style={{ fontSize:'0.62rem', color:'var(--text-3)',
+                fontFamily:'var(--font-mono)' }}>{result.session}</div>
+              <div style={{ marginTop:10, display:'flex', justifyContent:'center' }}>
+                <div style={{ fontFamily:'var(--font-mono)', fontSize:'0.65rem',
+                  color:'var(--text-2)' }}>
+                  Confluence: {result.confluence_score}/5
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Summary */}
+          {result.summary && (
+            <div style={{ background:'var(--bg-2)', border:'1px solid var(--border)',
+              borderRadius:'var(--radius-lg)', padding:'12px 14px' }}>
+              <div style={{ fontSize:'0.58rem', letterSpacing:'0.2em', color:'var(--text-3)',
+                fontFamily:'var(--font-mono)', marginBottom:8 }}>AI SUMMARY</div>
+              <div style={{ color:'var(--text-1)', fontSize:'0.82rem', lineHeight:1.7 }}>
                 {result.summary}
               </div>
             </div>
-          </div>
+          )}
 
           {/* Confluence checks */}
-          <div style={{ background:'#0d1117', border:'1px solid #1e2a35',
-            borderRadius:'4px', padding:'12px' }}>
-            <div style={{ color:'#4a6274', fontSize:'0.55rem', letterSpacing:'2px',
-              textTransform:'uppercase', marginBottom:'10px' }}>CONFLUENCE STACK</div>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'6px' }}>
-              {[
-                { l:'SSMT', v:result.ssmt_detected },
-                { l:'TPD',  v:result.tpd_detected },
-                { l:'PSP',  v:result.psp_detected },
-              ].map(({ l, v }) => (
-                <div key={l} style={{ display:'flex', alignItems:'center',
-                  justifyContent:'space-between', padding:'7px 9px',
-                  background:'#080b0f', borderRadius:'3px' }}>
-                  <span style={{ color:'#c9d6df', fontSize:'0.72rem', fontWeight:600 }}>{l}</span>
-                  <span style={{ fontSize:'0.68rem', fontWeight:800, padding:'2px 7px',
-                    borderRadius:'3px',
-                    background:v?'rgba(57,255,20,.1)':'rgba(255,45,85,.08)',
-                    color:v?'#39ff14':'#ff2d55',
-                    border:`1px solid ${v?'rgba(57,255,20,.25)':'rgba(255,45,85,.2)'}` }}>
-                    {v?'✓ YES':'✗ NO'}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div style={{ marginTop:'7px', background:'#080b0f', borderRadius:'3px',
-              padding:'8px 10px' }}>
-              <div style={{ color:'#4a6274', fontSize:'0.55rem', letterSpacing:'1px',
-                marginBottom:'3px' }}>TRUE OPEN POSITION</div>
-              <div style={{ color:'#c9d6df', fontSize:'0.78rem' }}>{result.true_open_position}</div>
-            </div>
-            <div style={{ marginTop:'6px', background:'#080b0f', borderRadius:'3px',
-              padding:'8px 10px' }}>
-              <div style={{ color:'#4a6274', fontSize:'0.55rem', letterSpacing:'1px',
-                marginBottom:'3px' }}>CYCLE POSITION</div>
-              <div style={{ color:'#c9d6df', fontSize:'0.78rem' }}>{result.cycle}</div>
-            </div>
+          <div style={{ background:'var(--bg-2)', border:'1px solid var(--border)',
+            borderRadius:'var(--radius-lg)', padding:'12px 14px' }}>
+            <div style={{ fontSize:'0.58rem', letterSpacing:'0.2em', color:'var(--text-3)',
+              fontFamily:'var(--font-mono)', marginBottom:10 }}>CONFLUENCE STACK</div>
+            <ResultChip label="SSMT Detected"    value={result.ssmt_detected?'✓ YES':'✗ NO'} ok={result.ssmt_detected} />
+            <ResultChip label="TPD Detected"     value={result.tpd_detected?'✓ YES':'✗ NO'} ok={result.tpd_detected} />
+            <ResultChip label="PSP Detected"     value={result.psp_detected?'✓ YES':'✗ NO'} ok={result.psp_detected} />
+            <ResultChip label="True Open Pos."   value={result.true_open_position} />
+            <ResultChip label="Cycle Position"   value={result.cycle} />
           </div>
 
           {/* Trade plan */}
-          <div style={{ background:'#0d1117', border:'1px solid #1e2a35',
-            borderRadius:'4px', padding:'12px' }}>
-            <div style={{ color:'#4a6274', fontSize:'0.55rem', letterSpacing:'2px',
-              textTransform:'uppercase', marginBottom:'10px' }}>TRADE PLAN</div>
+          <div style={{ background:'var(--bg-2)', border:'1px solid var(--border)',
+            borderRadius:'var(--radius-lg)', padding:'12px 14px' }}>
+            <div style={{ fontSize:'0.58rem', letterSpacing:'0.2em', color:'var(--text-3)',
+              fontFamily:'var(--font-mono)', marginBottom:10 }}>TRADE PLAN</div>
             {[
-              { l:'ENTRY ZONE',   v:result.entry_zone,   c:'#39ff14' },
-              { l:'STOP LOSS',    v:result.stop_loss,    c:'#ff2d55' },
-              { l:'TARGET / DOL', v:result.target,       c:'#00e5ff' },
-              { l:'INVALIDATION', v:result.invalidation, c:'#4a6274' },
-            ].map(({ l, v, c }) => v && (
-              <div key={l} style={{ display:'flex', gap:'10px', padding:'7px 0',
-                borderBottom:'1px solid #0a1018', alignItems:'flex-start' }}>
-                <span style={{ color:'#2a4a5a', fontSize:'0.58rem', letterSpacing:'1px',
-                  textTransform:'uppercase', flexShrink:0, width:88,
-                  paddingTop:2, fontWeight:600 }}>{l}</span>
+              { l:'ENTRY ZONE',   v:result.entry_zone,   c:'var(--green)' },
+              { l:'STOP LOSS',    v:result.stop_loss,    c:'var(--red)' },
+              { l:'TARGET / DOL', v:result.target,       c:'var(--cyan)' },
+              { l:'INVALIDATION', v:result.invalidation, c:'var(--text-3)' },
+            ].filter(x=>x.v).map(({l,v,c}) => (
+              <div key={l} style={{ display:'flex', gap:'1rem', padding:'7px 0',
+                borderBottom:'1px solid var(--bg-1)', alignItems:'flex-start' }}>
+                <span style={{ color:'var(--text-4)', fontSize:'0.58rem',
+                  letterSpacing:'0.1em', textTransform:'uppercase',
+                  flexShrink:0, width:80, fontFamily:'var(--font-mono)',
+                  paddingTop:1, fontWeight:600 }}>{l}</span>
                 <span style={{ color:c, fontSize:'0.8rem', lineHeight:1.5 }}>{v}</span>
               </div>
             ))}
           </div>
 
-          {/* Grade reasons */}
-          {result.grade_reasons?.length > 0 && (
-            <div style={{ background:'#0d1117', border:'1px solid #1e2a35',
-              borderRadius:'4px', padding:'12px' }}>
-              <div style={{ color:'#4a6274', fontSize:'0.55rem', letterSpacing:'2px',
-                textTransform:'uppercase', marginBottom:'8px' }}>GRADE RATIONALE</div>
-              {result.grade_reasons.map((r,i) => (
-                <div key={i} style={{ display:'flex', gap:'8px', marginBottom:'5px',
-                  alignItems:'flex-start' }}>
-                  <span style={{ color:GC[result.grade]||'#4a6274',
-                    fontSize:'0.6rem', flexShrink:0, marginTop:2 }}>◆</span>
-                  <span style={{ color:'#c9d6df', fontSize:'0.78rem', lineHeight:1.5 }}>{r}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Key observations */}
+          {/* Observations */}
           {result.key_observations?.length > 0 && (
-            <div style={{ background:'#0d1117', border:'1px solid #1e2a35',
-              borderRadius:'4px', padding:'12px' }}>
-              <div style={{ color:'#4a6274', fontSize:'0.55rem', letterSpacing:'2px',
-                textTransform:'uppercase', marginBottom:'8px' }}>QT OBSERVATIONS</div>
-              {result.key_observations.map((obs,i) => (
-                <div key={i} style={{ display:'flex', gap:'8px', marginBottom:'6px',
-                  alignItems:'flex-start' }}>
-                  <span style={{ color:'#00e5ff', fontSize:'0.6rem', flexShrink:0,
-                    marginTop:2 }}>→</span>
-                  <span style={{ color:'#c9d6df', fontSize:'0.78rem', lineHeight:1.5 }}>{obs}</span>
+            <div style={{ background:'var(--bg-2)', border:'1px solid var(--border)',
+              borderRadius:'var(--radius-lg)', padding:'12px 14px' }}>
+              <div style={{ fontSize:'0.58rem', letterSpacing:'0.2em', color:'var(--text-3)',
+                fontFamily:'var(--font-mono)', marginBottom:8 }}>QT OBSERVATIONS</div>
+              {result.key_observations.map((o,i) => (
+                <div key={i} style={{ display:'flex', gap:8, marginBottom:6 }}>
+                  <span style={{ color:'var(--cyan)', fontSize:'0.6rem', flexShrink:0, marginTop:2 }}>◆</span>
+                  <span style={{ color:'var(--text-1)', fontSize:'0.8rem', lineHeight:1.5 }}>{o}</span>
                 </div>
               ))}
             </div>
@@ -297,16 +323,14 @@ export default function AnalyzerPage() {
 
           {/* Mistakes to avoid */}
           {result.mistakes_to_avoid?.length > 0 && (
-            <div style={{ background:'rgba(255,45,85,.04)', border:'1px solid rgba(255,45,85,.15)',
-              borderRadius:'4px', padding:'12px' }}>
-              <div style={{ color:'#ff2d55', fontSize:'0.55rem', letterSpacing:'2px',
-                textTransform:'uppercase', marginBottom:'8px' }}>MISTAKES TO AVOID</div>
+            <div style={{ background:'var(--red-dim)', border:'1px solid rgba(255,51,102,0.15)',
+              borderRadius:'var(--radius-lg)', padding:'12px 14px' }}>
+              <div style={{ fontSize:'0.58rem', letterSpacing:'0.2em', color:'var(--red)',
+                fontFamily:'var(--font-mono)', marginBottom:8 }}>MISTAKES TO AVOID</div>
               {result.mistakes_to_avoid.map((m,i) => (
-                <div key={i} style={{ display:'flex', gap:'8px', marginBottom:'5px',
-                  alignItems:'flex-start' }}>
-                  <span style={{ color:'#ff2d55', fontSize:'0.6rem',
-                    flexShrink:0, marginTop:2 }}>⚠</span>
-                  <span style={{ color:'#c9d6df', fontSize:'0.78rem', lineHeight:1.5 }}>{m}</span>
+                <div key={i} style={{ display:'flex', gap:8, marginBottom:5 }}>
+                  <span style={{ color:'var(--red)', fontSize:'0.6rem', flexShrink:0, marginTop:2 }}>⚠</span>
+                  <span style={{ color:'var(--text-1)', fontSize:'0.8rem', lineHeight:1.5 }}>{m}</span>
                 </div>
               ))}
             </div>
@@ -314,14 +338,9 @@ export default function AnalyzerPage() {
 
           {/* Log button */}
           <a href={`/dashboard/journal?grade=${result.grade}&direction=${result.bias==='BULLISH'?'LONG':'SHORT'}`}
-            style={{
-              display:'block', textAlign:'center', padding:'11px',
-              background:'rgba(57,255,20,.1)', border:'1px solid rgba(57,255,20,.3)',
-              borderRadius:'4px', color:'#39ff14', fontFamily:'IBM Plex Mono, monospace',
-              fontWeight:700, fontSize:'0.78rem', letterSpacing:'3px',
-              textTransform:'uppercase', textDecoration:'none',
-            }}>
-            ✓ LOG THIS TRADE
+            className="btn btn-success" style={{ justifyContent:'center', fontSize:'0.72rem',
+              padding:'11px', display:'flex', letterSpacing:'0.15em' }}>
+            ✦ LOG THIS TRADE
           </a>
         </div>
       )}
