@@ -1,19 +1,20 @@
 import './globals.css'
 
 export const metadata = {
-  title: 'TradePulse — QT Trading Journal',
-  description: 'The most advanced trading journal for QT/ICT traders. Track, analyze, and improve your execution with AI-powered insights.',
-  keywords: 'trading journal, QT, ICT, NQ, ES, futures, prop trading',
-  openGraph: {
-    title: 'TradePulse — QT Trading Journal',
-    description: 'Track trades. Find patterns. Master your model.',
-    type: 'website',
-  }
+  title: 'TradePulse — QT Journal',
+  description: 'Institutional-grade trading journal for QT traders',
+  manifest: '/manifest.json',
 }
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+        <meta name="theme-color" content="#040508" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      </head>
       <body>{children}</body>
     </html>
   )
