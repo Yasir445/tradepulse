@@ -2,23 +2,26 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 
+function Skeleton({ h=100 }) {
+  return <div className="skeleton" style={{height:h, borderRadius:8}} />
+}
+
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState([])
   const [trades,   setTrades]   = useState([])
   const [loading,  setLoading]  = useState(true)
   const [adding,   setAdding]   = useState(false)
-  const [newName,  setNewName]  = useState('')
-  const [newType,  setNewType]  = useState('funded')
-  const [newBal,   setNewBal]   = useState('')
+  const [saving,   setSaving]   = useState(false)
+  const [form,     setForm]     = useState({name:'', type:'funded', balance:''})
 
   const load = useCallback(async () => {
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
-    const { data: accts } = await supabase.from('accounts').select('*')
-      .eq('user_id', session.user.id).order('created_at')
-    const { data: trds } = await supabase.from('trades').select('*')
-      .eq('user_id', session.user.id)
+    const [{ data: accts }, { data: trds }] = await Promise.all([
+      supabase.from('accounts').select('*').eq('user_id', session.user.id).order('created_at'),
+      supabase.from('trades').select('id,account_id,result,pnl_dollar,confluence,grade').eq('user_id', session.user.id),
+    ])
     setAccounts(accts || [])
     setTrades(trds || [])
     setLoading(false)
@@ -27,15 +30,19 @@ export default function AccountsPage() {
   useEffect(() => { load() }, [load])
 
   const addAccount = async () => {
-    if (!newName.trim()) return
+    if (!form.name.trim()) return
+    setSaving(true)
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
     await supabase.from('accounts').insert({
       user_id: session.user.id,
-      name: newName, type: newType,
-      balance: newBal ? parseFloat(newBal) : 50000,
+      name: form.name.trim(),
+      type: form.type,
+      balance: form.balance ? parseFloat(form.balance) : 50000,
     })
-    setNewName(''); setNewBal(''); setAdding(false)
+    setForm({name:'', type:'funded', balance:''})
+    setAdding(false)
+    setSaving(false)
     load()
   }
 
@@ -47,58 +54,66 @@ export default function AccountsPage() {
     load()
   }
 
-  const getAccountStats = (acctId) => {
+  const getStats = (acctId) => {
     const t = trades.filter(x => x.account_id === acctId)
-    const wins = t.filter(x => x.result === 'win').length
-    const pnl  = t.reduce((s,x) => s+(x.pnl_dollar||0), 0)
-    const wr   = t.length ? ((wins/t.length)*100).toFixed(1) : '0'
-    return { total: t.length, wins, pnl, wr }
+    const wins = t.filter(x => x.result==='win').length
+    const losses = t.filter(x => x.result==='loss').length
+    const pnl = t.reduce((s,x) => s+(x.pnl_dollar||0), 0)
+    const wr = t.length ? ((wins/t.length)*100).toFixed(1) : '0'
+    const bestGrade = ['A++','A+','A','B','C','F'].find(g => t.some(x=>x.grade===g)) || '—'
+    return { total:t.length, wins, losses, pnl, wr, bestGrade }
   }
 
   const inp = {
-    width:'100%', background:'#080b0f', border:'1px solid #1e2a35',
-    borderRadius:'3px', padding:'8px 10px', color:'#eaf4fb',
-    fontFamily:'IBM Plex Mono, monospace', fontSize:'0.82rem',
-    outline:'none', boxSizing:'border-box',
+    width:'100%', background:'var(--bg-1)', border:'1px solid var(--border)',
+    borderRadius:'var(--radius)', padding:'9px 12px', color:'var(--text-1)',
+    fontFamily:'var(--font-mono)', fontSize:'0.82rem', boxSizing:'border-box',
   }
 
+  const typeColor = (type) => ({
+    funded:'var(--cyan)', challenge:'var(--gold)',
+    personal:'var(--purple)', demo:'var(--text-3)',
+  }[type] || 'var(--text-3)')
+
   return (
-    <div style={{ maxWidth: 680 }}>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start',
-        marginBottom:'1.25rem' }}>
+    <div style={{maxWidth:680}}>
+      {/* Header */}
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'flex-start',
+        marginBottom:'1.5rem'}}>
         <div>
-          <div style={{ color:'#4a6274', fontSize:'0.55rem', letterSpacing:'3px',
-            textTransform:'uppercase', marginBottom:'3px' }}>Prop Firms & Personal</div>
-          <div style={{ color:'#eaf4fb', fontSize:'1.4rem', fontWeight:900,
-            letterSpacing:'2px' }}>ACCOUNTS</div>
+          <div style={{fontSize:'0.58rem', letterSpacing:'0.2em', color:'var(--text-3)',
+            fontFamily:'var(--font-mono)', marginBottom:4}}>PROP FIRMS & PERSONAL</div>
+          <h1 style={{fontFamily:'var(--font-display)', fontSize:'2rem', fontWeight:800,
+            color:'var(--text-1)', letterSpacing:'-0.02em', lineHeight:1}}>Accounts</h1>
         </div>
-        <button onClick={() => setAdding(p => !p)} style={{
-          padding:'7px 14px', background:'rgba(0,229,255,.1)',
-          border:'1px solid rgba(0,229,255,.3)', borderRadius:'3px',
-          color:'#00e5ff', fontFamily:'inherit', fontSize:'0.68rem',
-          letterSpacing:'2px', cursor:'pointer',
-        }}>+ ADD</button>
+        <button onClick={() => setAdding(p=>!p)} className="btn btn-primary"
+          style={{fontSize:'0.65rem'}}>
+          {adding ? '✕ CANCEL' : '+ ADD ACCOUNT'}
+        </button>
       </div>
 
       {/* Add form */}
       {adding && (
-        <div style={{ background:'#0d1117', border:'1px solid rgba(0,229,255,.2)',
-          borderRadius:'4px', padding:'14px', marginBottom:'1rem' }}>
-          <div style={{ color:'#00e5ff', fontSize:'0.6rem', letterSpacing:'2px',
-            marginBottom:'12px' }}>NEW ACCOUNT</div>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px',
-            marginBottom:'10px' }}>
+        <div style={{background:'var(--bg-2)', border:'1px solid rgba(0,212,255,0.2)',
+          borderRadius:'var(--radius-lg)', padding:'16px', marginBottom:'1rem'}}
+          className="slide-in">
+          <div style={{fontSize:'0.62rem', letterSpacing:'0.15em', color:'var(--cyan)',
+            fontFamily:'var(--font-mono)', fontWeight:700, marginBottom:12}}>
+            NEW ACCOUNT
+          </div>
+          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10,
+            marginBottom:12}}>
             <div>
-              <div style={{ color:'#4a6274', fontSize:'0.58rem', letterSpacing:'2px',
-                marginBottom:'4px' }}>NAME</div>
-              <input value={newName} onChange={e => setNewName(e.target.value)}
+              <div style={{fontSize:'0.58rem', color:'var(--text-3)', letterSpacing:'0.1em',
+                fontFamily:'var(--font-mono)', marginBottom:5}}>ACCOUNT NAME</div>
+              <input value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}
                 placeholder="e.g. Think Capital" style={inp} />
             </div>
             <div>
-              <div style={{ color:'#4a6274', fontSize:'0.58rem', letterSpacing:'2px',
-                marginBottom:'4px' }}>TYPE</div>
-              <select value={newType} onChange={e => setNewType(e.target.value)}
-                style={{ ...inp, cursor:'pointer' }}>
+              <div style={{fontSize:'0.58rem', color:'var(--text-3)', letterSpacing:'0.1em',
+                fontFamily:'var(--font-mono)', marginBottom:5}}>TYPE</div>
+              <select value={form.type} onChange={e=>setForm(p=>({...p,type:e.target.value}))}
+                style={{...inp, cursor:'pointer'}}>
                 <option value="funded">Funded / Prop</option>
                 <option value="challenge">Challenge</option>
                 <option value="personal">Personal</option>
@@ -106,113 +121,130 @@ export default function AccountsPage() {
               </select>
             </div>
             <div>
-              <div style={{ color:'#4a6274', fontSize:'0.58rem', letterSpacing:'2px',
-                marginBottom:'4px' }}>ACCOUNT SIZE ($)</div>
-              <input type="number" value={newBal} onChange={e => setNewBal(e.target.value)}
-                placeholder="e.g. 100000" style={inp} />
+              <div style={{fontSize:'0.58rem', color:'var(--text-3)', letterSpacing:'0.1em',
+                fontFamily:'var(--font-mono)', marginBottom:5}}>ACCOUNT SIZE ($)</div>
+              <input type="number" value={form.balance}
+                onChange={e=>setForm(p=>({...p,balance:e.target.value}))}
+                placeholder="100000" style={inp} />
             </div>
           </div>
-          <div style={{ display:'flex', gap:'7px' }}>
-            <button onClick={addAccount} style={{
-              padding:'7px 16px', background:'rgba(57,255,20,.1)',
-              border:'1px solid rgba(57,255,20,.3)', borderRadius:'3px',
-              color:'#39ff14', fontFamily:'inherit', fontSize:'0.68rem',
-              letterSpacing:'2px', cursor:'pointer',
-            }}>✓ SAVE</button>
-            <button onClick={() => setAdding(false)} style={{
-              padding:'7px 14px', background:'transparent',
-              border:'1px solid #1e2a35', borderRadius:'3px',
-              color:'#4a6274', fontFamily:'inherit', fontSize:'0.68rem',
-              cursor:'pointer',
-            }}>CANCEL</button>
-          </div>
+          <button onClick={addAccount} disabled={saving} className="btn btn-success"
+            style={{fontSize:'0.65rem'}}>
+            {saving ? '⏳ SAVING…' : '✓ SAVE ACCOUNT'}
+          </button>
         </div>
       )}
 
-      {/* Accounts list */}
       {loading ? (
-        <div style={{ color:'#1e3a4a', fontSize:'0.72rem', textAlign:'center',
-          padding:'2rem', letterSpacing:'2px' }}>LOADING…</div>
+        <div style={{display:'flex', flexDirection:'column', gap:10}}>
+          {[1,2,3].map(i => <Skeleton key={i} />)}
+        </div>
       ) : (
-        <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+        <div style={{display:'flex', flexDirection:'column', gap:10}}>
           {accounts.map(a => {
-            const stats = getAccountStats(a.id)
-            const pnlPct = a.balance ? ((stats.pnl / a.balance)*100).toFixed(2) : '0'
-            const pnlColor = stats.pnl >= 0 ? '#39ff14' : '#ff2d55'
-            const typeColor = a.type==='funded'?'#00e5ff':a.type==='challenge'?'#ffcc00':a.type==='demo'?'#4a6274':'#c084ff'
-            const drawdownPct = a.balance ? ((Math.abs(Math.min(0,stats.pnl))/a.balance)*100).toFixed(2) : '0'
-            const drawdownColor = parseFloat(drawdownPct) > 5 ? '#ff2d55' : parseFloat(drawdownPct) > 2 ? '#ffcc00' : '#39ff14'
+            const stats    = getStats(a.id)
+            const pnlPct   = a.balance ? ((stats.pnl/a.balance)*100).toFixed(2) : '0'
+            const pnlColor = stats.pnl>=0 ? 'var(--green)' : 'var(--red)'
+            const ddPct    = a.balance ? (Math.abs(Math.min(0,stats.pnl))/a.balance*100).toFixed(2) : '0'
+            const ddColor  = parseFloat(ddPct)>5?'var(--red)':parseFloat(ddPct)>2?'var(--gold)':'var(--green)'
+            const tc       = typeColor(a.type)
 
             return (
               <div key={a.id} style={{
-                background:'#0d1117', border:'1px solid #1e2a35',
-                borderLeft:`3px solid ${typeColor}`,
-                borderRadius:'4px', padding:'14px',
+                background:'var(--bg-2)', border:'1px solid var(--border)',
+                borderLeft:`3px solid ${tc}`,
+                borderRadius:'var(--radius-lg)', padding:'14px',
+                transition:'border-color 0.15s',
               }}>
-                <div style={{ display:'flex', justifyContent:'space-between',
-                  alignItems:'flex-start', marginBottom:'10px' }}>
+                {/* Account header */}
+                <div style={{display:'flex', justifyContent:'space-between',
+                  alignItems:'flex-start', marginBottom:12}}>
                   <div>
-                    <div style={{ color:'#eaf4fb', fontWeight:700, fontSize:'0.95rem',
-                      marginBottom:'3px' }}>{a.name}</div>
-                    <div style={{ display:'flex', gap:'6px', alignItems:'center' }}>
-                      <span style={{ fontSize:'0.58rem', padding:'2px 7px', borderRadius:'3px',
-                        background:`${typeColor}15`, color:typeColor,
-                        border:`1px solid ${typeColor}30`, letterSpacing:'1px',
-                        textTransform:'uppercase' }}>{a.type}</span>
-                      <span style={{ color:'#4a6274', fontSize:'0.62rem', fontFamily:'monospace' }}>
-                        ${(a.balance||0).toLocaleString()}
-                      </span>
+                    <div style={{display:'flex', alignItems:'center', gap:8,
+                      marginBottom:4}}>
+                      <span style={{color:'var(--text-1)', fontWeight:700,
+                        fontSize:'0.95rem'}}>{a.name}</span>
+                      <span className="badge" style={{
+                        background:`${tc}15`, color:tc,
+                        border:`1px solid ${tc}30`, fontSize:'0.55rem',
+                        letterSpacing:'0.15em',
+                      }}>{a.type.toUpperCase()}</span>
+                    </div>
+                    <div style={{fontFamily:'var(--font-mono)', fontSize:'0.65rem',
+                      color:'var(--text-3)'}}>
+                      Account Size: ${(a.balance||0).toLocaleString()}
                     </div>
                   </div>
-                  <button onClick={() => deleteAccount(a.id)} style={{
-                    background:'transparent', border:'none', color:'#1e3a4a',
-                    cursor:'pointer', fontSize:'0.75rem', padding:'2px 5px',
-                  }}>✕</button>
+                  <button onClick={() => deleteAccount(a.id)}
+                    style={{background:'transparent', border:'none', color:'var(--text-4)',
+                      cursor:'pointer', fontSize:'0.78rem', padding:'2px 6px',
+                      transition:'color 0.15s'}}
+                    onMouseEnter={e=>e.target.style.color='var(--red)'}
+                    onMouseLeave={e=>e.target.style.color='var(--text-4)'}>✕</button>
                 </div>
 
                 {/* Stats grid */}
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'6px',
-                  marginBottom:'10px' }}>
+                <div style={{display:'grid', gridTemplateColumns:'repeat(4,1fr)',
+                  gap:7, marginBottom:12}}>
                   {[
-                    { l:'Trades', v:stats.total, c:'#00e5ff' },
-                    { l:'Win Rate', v:`${stats.wr}%`, c:parseFloat(stats.wr)>=60?'#39ff14':parseFloat(stats.wr)>=45?'#ffcc00':'#ff2d55' },
-                    { l:'P&L $', v:`${stats.pnl>=0?'+$':'-$'}${Math.abs(stats.pnl).toFixed(0)}`, c:pnlColor },
-                    { l:'P&L %', v:`${stats.pnl>=0?'+':''}${pnlPct}%`, c:pnlColor },
-                  ].map(({ l, v, c }) => (
-                    <div key={l} style={{ background:'#080b0f', borderRadius:'3px',
-                      padding:'7px', textAlign:'center' }}>
-                      <div style={{ color:'#4a6274', fontSize:'0.5rem', letterSpacing:'1px',
-                        textTransform:'uppercase', marginBottom:'3px' }}>{l}</div>
-                      <div style={{ color:c, fontFamily:"'Bebas Neue',sans-serif",
-                        fontSize:'1.1rem', letterSpacing:'2px' }}>{v}</div>
+                    {l:'Trades',   v:stats.total,    c:'var(--cyan)'},
+                    {l:'Win Rate', v:`${stats.wr}%`, c:parseFloat(stats.wr)>=60?'var(--green)':parseFloat(stats.wr)>=45?'var(--gold)':'var(--red)'},
+                    {l:'P&L $',    v:`${stats.pnl>=0?'+$':'-$'}${Math.abs(stats.pnl).toFixed(0)}`, c:pnlColor},
+                    {l:'P&L %',    v:`${stats.pnl>=0?'+':''}${pnlPct}%`, c:pnlColor},
+                  ].map(({l,v,c}) => (
+                    <div key={l} style={{background:'var(--bg-1)', borderRadius:'var(--radius)',
+                      padding:'8px', textAlign:'center',
+                      border:'1px solid var(--border)'}}>
+                      <div style={{fontFamily:'var(--font-mono)', fontSize:'1rem',
+                        fontWeight:700, color:c, lineHeight:1, marginBottom:3}}>{v}</div>
+                      <div style={{fontSize:'0.5rem', color:'var(--text-3)',
+                        letterSpacing:'0.1em', textTransform:'uppercase',
+                        fontFamily:'var(--font-mono)'}}>{l}</div>
                     </div>
                   ))}
                 </div>
 
-                {/* Drawdown bar */}
+                {/* Balance progress */}
                 {a.balance > 0 && (
                   <div>
-                    <div style={{ display:'flex', justifyContent:'space-between',
-                      marginBottom:'3px' }}>
-                      <span style={{ color:'#4a6274', fontSize:'0.55rem', letterSpacing:'1px' }}>
-                        DRAWDOWN
-                      </span>
-                      <span style={{ color:drawdownColor, fontSize:'0.62rem', fontWeight:700 }}>
-                        {drawdownPct}%
+                    <div style={{display:'flex', justifyContent:'space-between',
+                      marginBottom:4}}>
+                      <span style={{fontSize:'0.55rem', color:'var(--text-3)',
+                        fontFamily:'var(--font-mono)', letterSpacing:'0.1em',
+                        textTransform:'uppercase'}}>Account Balance</span>
+                      <span style={{fontFamily:'var(--font-mono)', fontSize:'0.65rem',
+                        color:'var(--text-2)'}}>
+                        ${Math.max(0, a.balance+stats.pnl).toLocaleString()} / ${a.balance.toLocaleString()}
                       </span>
                     </div>
-                    <div style={{ background:'#1e2a35', borderRadius:'2px', height:4 }}>
+                    <div style={{background:'var(--bg-1)', borderRadius:3, height:5,
+                      overflow:'hidden', marginBottom:8}}>
                       <div style={{
-                        width:`${Math.min(parseFloat(drawdownPct)*2, 100)}%`,
-                        height:'100%', background:drawdownColor,
-                        borderRadius:'2px', transition:'width .4s',
+                        width:`${Math.max(0,Math.min(100,((a.balance+stats.pnl)/a.balance)*100))}%`,
+                        height:'100%', background:pnlColor,
+                        borderRadius:3, transition:'width 0.5s',
                       }} />
                     </div>
-                    <div style={{ display:'flex', justifyContent:'space-between',
-                      marginTop:'2px' }}>
-                      <span style={{ color:'#1e3a4a', fontSize:'0.5rem' }}>0%</span>
-                      <span style={{ color:parseFloat(drawdownPct)>5?'#ff2d55':'#1e3a4a',
-                        fontSize:'0.5rem' }}>Max 5% daily</span>
+
+                    <div style={{display:'flex', justifyContent:'space-between',
+                      marginBottom:3}}>
+                      <span style={{fontSize:'0.55rem', color:'var(--text-3)',
+                        fontFamily:'var(--font-mono)', letterSpacing:'0.1em',
+                        textTransform:'uppercase'}}>Drawdown</span>
+                      <span style={{fontFamily:'var(--font-mono)', fontSize:'0.65rem',
+                        color:ddColor, fontWeight:700}}>{ddPct}%</span>
+                    </div>
+                    <div style={{background:'var(--bg-1)', borderRadius:3, height:4,
+                      overflow:'hidden'}}>
+                      <div style={{
+                        width:`${Math.min(parseFloat(ddPct)*4, 100)}%`,
+                        height:'100%', background:ddColor,
+                        borderRadius:3, transition:'width 0.5s',
+                      }} />
+                    </div>
+                    <div style={{display:'flex', justifyContent:'flex-end', marginTop:2}}>
+                      <span style={{fontSize:'0.5rem', color:parseFloat(ddPct)>5?'var(--red)':'var(--text-4)',
+                        fontFamily:'var(--font-mono)'}}>Max 5% daily risk</span>
                     </div>
                   </div>
                 )}
